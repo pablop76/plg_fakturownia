@@ -20,7 +20,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 2. Wejdź w ustawienia i uzupełnij:  
    - **API Token** z konta Fakturownia,  
    - **subdomenę konta** (np. `mojafirma`),  
-   - wybierz rodzaj wystawianionego dokumentu faktura/paragon (np. po opłaceniu zamówienia, dla paragony wymagany moduł paragony.pl).  
+   - wybierz rodzaj wystawianionego dokumentu faktura/paragon (po opłaceniu zamówienia, dla paragony wymagany moduł paragony.pl).  
 
 ---
 
