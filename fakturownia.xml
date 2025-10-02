@@ -7,7 +7,7 @@
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
     <copyright>(C) 2025 web-service. All rights reserved.</copyright>
-    <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
+    <license>MIT</license>
     <description>Integracja HikaShop z Fakturownią</description>
 
     <files>
@@ -84,4 +84,5 @@
             </fieldset>
         </fields>
     </config>
+
 </extension>
