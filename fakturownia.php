@@ -33,19 +33,30 @@ class plgHikashopFakturownia extends JPlugin
         $shipping = $orderFull->shipping_address ?? new stdClass;
         $customer = $orderFull->customer ?? new stdClass;
         $products = $orderFull->products ?? [];
-        $shippings = (array)($orderFull->shippings ?? []);
+        $shippings = $orderFull->shippings ?? [];
+
+        //koszt metody płatności np. "Płatność przy odbiorze"
+        //nazwa np. "Płatność przy odbiorze"
+        $paymentName = $orderFull->payment->payment_name ?? '';
+        //kwota netto
+        $paymentPrice = isset($orderFull->payment->payment_price) ? (float)$orderFull->payment->payment_price : 0.0;
+        
+        // Dane kuponu rabatowego (jeśli istnieje)
+        $couponCode = $orderFull->order_discount_code ?? '';
+        $couponValue = isset($orderFull->order_discount_price) ? (float)$orderFull->order_discount_price : 0.0;
 
         $apiToken = trim($this->params->get('api_token'));
         $subdomain = trim($this->params->get('subdomain'));
 
-    
         $seller_name = trim($this->params->get('seller_name'));
         $seller_tax_no = trim($this->params->get('seller_tax_no'));
 
         $exportShipping = (int) $this->params->get('add_shipping_to_invoice', 0);
         $invoiceMode = $this->params->get('invoice_mode', 'auto');
 
-        // sprawdzamy, czy klient ustawił pole invoice_request
+        /** sprawdzamy, czy klient ustawił pole invoice_request, 
+         * czy chce fakturę 
+         */ 
         $clientWantsInvoice = false;
         if (isset($order->invoice_request) && !empty($order->invoice_request)) {
             $clientWantsInvoice = true;
@@ -68,6 +79,10 @@ class plgHikashopFakturownia extends JPlugin
             }
         }
 
+        /** Utwórz (lub pobierz) obiekt klienta HTTP w Joomla, 
+         * który umożliwia wykonywanie zapytań sieciowych 
+         * — np. GET, POST, PUT itp. 
+         */ 
         $http = HttpFactory::getHttp();
 
         $userEmail = $customer->user_email ?? 'Brak danych';
@@ -77,7 +92,7 @@ class plgHikashopFakturownia extends JPlugin
         $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
 
         // Buduje pozycje faktury (produkty + wysyłka)
-        $positions = $this->buildPositions($products,$exportShipping, $shippings);
+        $positions = $this->buildPositions($products,$exportShipping, $shippings, $paymentName, $paymentPrice,  $couponCode, $couponValue);
 
         // Wysyła fakturę do Fakturowni i pobiera jej ID
         $invoiceId = $this->sendInvoice($http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug);
@@ -262,50 +277,126 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
     /**
      * Buduje tablicę pozycji faktury (produkty i wysyłka) na podstawie zamówienia.
      */
-    private function buildPositions($products,$exportShipping, $shippings)
+    private function buildPositions($products, $exportShipping, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue)
     {
         $positions = [];
+
         foreach ($products as $product) {
-            $qty = (float)$product->order_product_quantity;
-            $priceNet = (float)$product->order_product_price;
-            $priceTax = (float)$product->order_product_tax;
-            $priceGross = $priceNet + $priceTax;
+            $qty = (float)$product->order_product_quantity; // ilość produktów
+            $priceNet = (float)$product->order_product_price_before_discount; //cena zawsze przed rabatem
+
+            // Pobranie stawki VAT
             $taxRate = 0;
             if (!empty($product->order_product_tax_info)) {
                 $taxInfos = (array)$product->order_product_tax_info;
-                $firstTaxInfo = reset($taxInfos);
-                if (is_object($firstTaxInfo)) $firstTaxInfo = (array)$firstTaxInfo;
-                if (isset($firstTaxInfo['tax_rate'])) $taxRate = (float)$firstTaxInfo['tax_rate'] * 100;
+                $firstTax = reset($taxInfos);
+                if (is_object($firstTax)) $firstTax = (array)$firstTax;
+                if (isset($firstTax['tax_rate'])) {
+                    $taxRate = (float)$firstTax['tax_rate']; // np. 0.23
+                }
             }
-            $positions[] = [
+
+            // Obliczenie kwoty podatku i ceny brutto
+            $priceTax = $priceNet * $taxRate;
+            $priceGross = $priceNet + $priceTax;
+
+            if (!empty($product->order_product_tax_info)) {
+                $taxInfos = (array)$product->order_product_tax_info;
+                $firstTax = reset($taxInfos);
+                if (is_object($firstTax)) $firstTax = (array)$firstTax;
+                if (isset($firstTax['tax_rate'])) {
+                    $taxRate = (float)$firstTax['tax_rate'] * 100;
+                }
+            }
+
+            // Utwórz podstawową pozycję
+            $position = [
                 'name' => strip_tags($product->order_product_name),
                 'quantity' => $qty,
-                'tax' => $taxRate,
+                'tax' => $taxRate, // procent
                 'total_price_gross' => $priceGross * $qty,
             ];
-        }
-        if ($exportShipping){
-                foreach ($shippings as $ship) {
-                    if (!is_object($ship)) continue;
-                    $priceNet = (float)$ship->shipping_price;
-                    $taxRate = 23.0;
-                    $priceGross = $priceNet * (1 + $taxRate / 100);
-                    $positions[] = [
-                        'name' => 'Wysyłka: ' . $ship->shipping_name,
-                        'quantity' => 1,
-                        'tax' => $taxRate,
-                        'total_price_gross' => $priceGross,
-                    ];
+
+            // Dodaj rabat tylko jeśli istnieje
+            if (isset($product->order_product_discount_info)) {
+                $info = $product->order_product_discount_info;
+                $flat = isset($info->discount_flat_amount) ? (float)$info->discount_flat_amount : 0.0; // kwotowa zniżka
+                $percent = isset($info->discount_percent_amount) ? (float)$info->discount_percent_amount : 0.0; // procentowa zniżka
+
+                if ($flat > 0) {
+                    $position['discount'] = $flat;
+                } elseif ($percent > 0) {
+                    $position['discount_percent'] = $percent;
                 }
+            }
+
+            // Dodaj produkt do tablicy pozycji
+            $positions[] = $position;
         }
+
+        // Dodaj pozycje wysyłki (jeśli włączone)
+        if ($exportShipping) {
+            foreach ($shippings as $ship) {
+                if (!is_object($ship)) continue;
+
+                $priceNet = (float)$ship->shipping_price;
+                $taxRate = 23.0;
+                $priceGross = $priceNet * (1 + $taxRate / 100);
+
+                $positions[] = [
+                    'name' => 'Wysyłka: ' . $ship->shipping_name,
+                    'quantity' => 1,
+                    'tax' => $taxRate,
+                    'total_price_gross' => $priceGross,
+                ];
+            }
+        }
+        // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0
+        if ($paymentPrice > 0) {
+            $taxRate = 23.0; // domyślnie 23%
+            $priceGross = $paymentPrice * (1 + $taxRate / 100);
+
+            $positions[] = [
+                'name' => 'Koszt płatności: ' . strip_tags($paymentName ?: 'Płatność'),
+                'quantity' => 1,
+                'tax' => $taxRate,
+                'total_price_gross' => $priceGross,
+            ];
+        }
+        // Dodaj pozycję kuponu rabatowego jako osobny wiersz na fakturze 
+        if (!empty($couponCode) && $couponValue > 0) {
+            $positions[] = [
+                'name' => 'Kupon rabatowy: ' . $couponCode,
+                'quantity' => 1,
+                'tax' => 0, // brak podatku
+                'total_price_gross' => -1 * $couponValue, // ujemna wartość (odejmujemy rabat)
+            ];
+        }
+
         return $positions;
     }
+
 
     /**
      * Wysyła fakturę do Fakturowni przez API i zwraca jej ID.
      */
     private function sendInvoice($http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug)
     {
+        // Sprawdź, czy w pozycji jest chociaż jeden rabat
+        $showDiscount = false;
+        $discountKind = null;
+
+        foreach ($positions as $pos) {
+            if (isset($pos['discount']) && $pos['discount'] > 0) {
+                $showDiscount = true;
+                $discountKind = 'amount';
+                break;
+            } elseif (isset($pos['discount_percent']) && $pos['discount_percent'] > 0) {
+                $showDiscount = true;
+                $discountKind = 'percent_unit';
+                break;
+            }
+        }
 
         $payload = [
             'api_token' => $apiToken,
@@ -320,8 +411,13 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
                 'buyer_name' => $billing->address_company ?: $billing->address_firstname . ' ' . $billing->address_lastname,
                 'buyer_tax_no' => $billing->address_vat,
                 'positions' => $positions,
+                'show_discount' => $showDiscount,
             ],
         ];
+        // jezeli jest rabat to dodaj rodzaj rabatu
+        if ($showDiscount && $discountKind) {
+            $payload['invoice']['discount_kind'] = $discountKind;
+        }
 
         if ($debug) {
             $this->log($logFile, "Wysyłamy fakturę JSON: " . json_encode($payload, JSON_UNESCAPED_UNICODE));
