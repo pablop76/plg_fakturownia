@@ -368,7 +368,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
             $positions[] = [
                 'name' => 'Kupon rabatowy: ' . $couponCode,
                 'quantity' => 1,
-                'tax' => 0, // brak podatku
+                'tax' => $taxRate, // używamy ostatnio zdefiniowanej stawki VAT
                 'total_price_gross' => -1 * $couponValue, // ujemna wartość (odejmujemy rabat)
             ];
         }
