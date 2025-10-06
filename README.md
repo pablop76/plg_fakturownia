@@ -27,7 +27,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
      nazwa kolumny 'invoice_request',
      tabela 'address' w HikaShop.
      W adresie rozliczeniowym klienta pojawi się checkbox którego zaznaczenie spowoduje, że zawsze zostanie wystawiona faktura.
-     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.jpg?raw=true)
+     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.png?raw=true)
 
 
 ---
