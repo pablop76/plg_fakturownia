@@ -11,7 +11,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 ## Funkcje
 - Automatyczne wystawianie faktur VAT w Fakturowni przy zamówieniach z HikaShop.  
 - Przekazywanie danych klienta (imię, nazwisko, firma, NIP, adres, e-mail).  
-- Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT).  
+- Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT, rabaty, koszty wysyłki, kupony).  
 
 ---
 
@@ -20,7 +20,15 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 2. Wejdź w ustawienia i uzupełnij:  
    - **API Token** z konta Fakturownia,  
    - **subdomenę konta** (np. `mojafirma`),  
-   - wybierz rodzaj wystawianionego dokumentu faktura/paragon (po opłaceniu zamówienia, dla paragony wymagany moduł paragony.pl).  
+   - wybierz rodzaj wystawianionego dokumentu faktura/paragon (do paragonu wymagany moduł paragony.pl instalowany w serwisie fakturownia.pl).
+3. Dodatkowa opcja 
+   - Wystawia zawsze fakturę niezależeni od ustawień administratora na życzenie klienta.
+     Należy utwórzyć pole użytkownika (hikashop->Wyświetlenie->Pola użytkownika)
+     nazwa kolumny 'invoice_request',
+     tabela 'address' w HikaShop.
+     W adresie rozliczeniowym klienta pojawi się checkbox którego zaznaczenie spowoduje, że zawsze zostanie wystawiona faktura.
+     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.jpg?raw=true)
+
 
 ---
 
