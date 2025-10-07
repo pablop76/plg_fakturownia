@@ -21,6 +21,9 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **API Token** z konta Fakturownia,  
    - **subdomenę konta** (np. `mojafirma`),  
    - wybierz rodzaj wystawianionego dokumentu faktura/paragon (do paragonu wymagany moduł paragony.pl instalowany w serwisie fakturownia.pl).
+  
+     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image-2.png?raw=true)
+     
 3. Dodatkowa opcja
    Wystawia fakturę zawsze, niezależnie od ustawień administratora, jeśli klient tego zażąda.
    Aby skorzystać z tej funkcji, należy utworzyć pole użytkownika w panelu:
