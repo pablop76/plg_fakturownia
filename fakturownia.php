@@ -79,7 +79,7 @@ class plgHikashopFakturownia extends JPlugin
             }
         }
 
-        /** Utwórz (lub pobierz) obiekt klienta HTTP w Joomla, 
+        /** Utwórz obiekt klienta HTTP w Joomla, 
          * który umożliwia wykonywanie zapytań sieciowych 
          * — np. GET, POST, PUT itp. 
          */ 
@@ -95,7 +95,7 @@ class plgHikashopFakturownia extends JPlugin
         $positions = $this->buildPositions($products,$exportShipping, $shippings, $paymentName, $paymentPrice,  $couponCode, $couponValue);
 
         // Wysyła fakturę do Fakturowni i pobiera jej ID
-        $invoiceId = $this->sendInvoice($http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug);
+        $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug);
 
         // Wysyła płatność powiązaną z fakturą do Fakturowni
         $this->sendPayment($http, $apiToken, $subdomain, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug);
@@ -229,7 +229,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
                 "name" => "Plantność za zamówienie id:" . $orderFull->order_id,
                 "oid" => "",
                 "paid" => true,
-                "paid_date" => date('Y-m-d H:i:s', $orderFull->order_created),
+                "paid_date" => date('Y-m-d H:i:s', $orderFull->order_invoice_created),
                 "phone" => $billing->address_telephone,
                 "post_code" => $billing->address_post_code,
                 "price" => $orderFull->order_full_price,
@@ -378,9 +378,9 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
 
 
     /**
-     * Wysyła fakturę do Fakturowni przez API i zwraca jej ID.
+     * Wysyła fakturę do Fakturowni przez API.
      */
-    private function sendInvoice($http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug)
+    private function sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug)
     {
         // Sprawdź, czy w pozycji jest chociaż jeden rabat
         $showDiscount = false;
@@ -403,9 +403,9 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
             'invoice' => [
                 'kind' => $invoiceKind,
                 'number' => null,
-                'sell_date' => date('Y-m-d'),
-                'issue_date' => date('Y-m-d'),
-                'payment_to' => date('Y-m-d', strtotime('+7 days')),
+                'sell_date' => date('Y-m-d', $orderFull->order_created),
+                'issue_date' => date('Y-m-d', $orderFull->order_invoice_created),
+                'payment_to' => date('Y-m-d', strtotime('+7 days', $orderFull->order_invoice_created)),
                 'seller_name' => $seller_name,
                 'seller_tax_no' => $seller_tax_no,
                 'buyer_name' => $billing->address_company ?: $billing->address_firstname . ' ' . $billing->address_lastname,
