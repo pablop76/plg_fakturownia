@@ -21,16 +21,15 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **API Token** z konta Fakturownia,  
    - **subdomenę konta** (np. `mojafirma`),  
    - wybierz rodzaj wystawianionego dokumentu faktura/paragon (do paragonu wymagany moduł paragony.pl instalowany w serwisie fakturownia.pl).
-3. Dodatkowa opcja 
-   - Wystawia zawsze fakturę niezależeni od ustawień administratora na życzenie klienta.
-     Należy utwórzyć pole użytkownika (hikashop->Wyświetlenie->Pola użytkownika)
-     nazwa kolumny 'invoice_request',
-     tabela 'address' w HikaShop.
-     W adresie rozliczeniowym klienta pojawi się checkbox którego zaznaczenie spowoduje, że zawsze zostanie wystawiona faktura.
+3. Dodatkowa opcja
+   Wystawia fakturę zawsze, niezależnie od ustawień administratora, jeśli klient tego zażąda.
+   Aby skorzystać z tej funkcji, należy utworzyć pole użytkownika w panelu:
+   HikaShop → Wyświetlenie → Pola użytkownika
+   Nazwa kolumny: invoice_request
+   Tabela: address
+   W adresie rozliczeniowym klienta pojawi się pole typu checkbox. Zaznaczenie tego pola spowoduje, że system zawsze wystawi fakturę.
+   
      ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.png?raw=true)
-
-
----
 
 ## Jak korzystać?
 1. Klient składa zamówienie w sklepie.  
