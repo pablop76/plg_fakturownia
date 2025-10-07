@@ -10,7 +10,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 
 ## Funkcje
 - Automatyczne wystawianie faktur VAT w Fakturowni przy zamówieniach z HikaShop.  
-- Przekazywanie danych klienta (imię, nazwisko, firma, NIP, adres, e-mail).  
+- Przekazywanie danych klienta (imię, nazwisko, nr.telefonu, nazwa firmy, NIP, adres, e-mail).  
 - Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT, rabaty, koszty wysyłki, kupony).  
 
 ---
