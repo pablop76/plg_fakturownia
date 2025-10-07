@@ -22,7 +22,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **subdomenę konta** (np. `mojafirma`),  
    - wybierz rodzaj wystawianionego dokumentu faktura/paragon (do paragonu wymagany moduł paragony.pl instalowany w serwisie fakturownia.pl).
   
-     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image-2.png?raw=true)
+![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image-2.png?raw=true)
      
 3. Dodatkowa opcja
    Wystawia fakturę zawsze, niezależnie od ustawień administratora, jeśli klient tego zażąda.
@@ -32,7 +32,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    Tabela: address
    W adresie rozliczeniowym klienta pojawi się pole typu checkbox. Zaznaczenie tego pola spowoduje, że system zawsze wystawi fakturę.
    
-     ![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.png?raw=true)
+![pole użytkownika hikashop](https://github.com/pablop76/plg_fakturownia/blob/main/image.png?raw=true)
 
 ## Jak korzystać?
 1. Klient składa zamówienie w sklepie.  
