@@ -3,8 +3,6 @@
 ## Status projektu  
 Wtyczka jest w trakcie rozwoju – może zawierać błędy i nie jest jeszcze gotowa do użycia w środowisku produkcyjnym.  
 
-np. nie oblicza poprawnie kuponów / fakturownia nie akceptuje ujemnych wartości
-
 ## Opis
 Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.pl](https://fakturownia.pl) na podstawie zamówień z HikaShop.  
 
@@ -13,7 +11,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 ## Funkcje
 - Automatyczne wystawianie faktur VAT w Fakturowni przy zamówieniach z HikaShop.  
 - Przekazywanie danych klienta (imię, nazwisko, nr.telefonu, nazwa firmy, NIP, adres, e-mail).  
-- Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT, rabaty, koszty wysyłki).  
+- Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT, rabaty, koszty wysyłki, kupony).  
 
 ---
 
