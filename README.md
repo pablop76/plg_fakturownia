@@ -3,6 +3,8 @@
 ## Status projektu  
 Wtyczka jest w trakcie rozwoju – może zawierać błędy i nie jest jeszcze gotowa do użycia w środowisku produkcyjnym.  
 
+wersja Hikashop Starter nie sprawdza czy kupon ma pokrycie w towarze co powoduje błąd obliczeń w fakturowni!!!
+
 ## Opis
 Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.pl](https://fakturownia.pl) na podstawie zamówień z HikaShop.  
 
