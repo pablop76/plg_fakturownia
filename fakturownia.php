@@ -14,6 +14,7 @@ class plgHikashopFakturownia extends JPlugin
     public function onAfterOrderUpdate(&$order, &$send_email)
     {
         $logFile = JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log';
+        $debugOrder = (int) $this->params->get('debug_order', 0);
         $debug = (int) $this->params->get('debug', 0);
 
         $this->initLogFile($logFile);
@@ -22,7 +23,7 @@ class plgHikashopFakturownia extends JPlugin
         if (!$orderFull) return;
 
         //dane całego zamówienia w logu
-        if ($debug) $this->logOrder($logFile, $orderFull);
+        if ($debugOrder) $this->logOrder($logFile, $orderFull);
 
         if (empty($orderFull->order_status) || $orderFull->order_status !== 'confirmed') {
             $this->log($logFile, "Status nie confirmed, wychodzimy");
@@ -34,6 +35,17 @@ class plgHikashopFakturownia extends JPlugin
         $customer = $orderFull->customer ?? new stdClass;
         $products = $orderFull->products ?? [];
         $shippings = $orderFull->shippings ?? [];
+        //waluta zamówienia
+        $orderCurrencyInfo = $orderFull->order_currency_info ?? new stdClass;
+        $obj = unserialize($orderCurrencyInfo);
+
+        if ($obj && isset($obj->currency_code)) {
+            $currencyCode = $obj->currency_code; // Wynik: PLN
+        } else {
+            echo "Nie udało się odczytać waluty.";
+        }
+
+
 
         //koszt metody płatności np. "Płatność przy odbiorze"
         //nazwa np. "Płatność przy odbiorze"
@@ -51,7 +63,6 @@ class plgHikashopFakturownia extends JPlugin
         $seller_name = trim($this->params->get('seller_name'));
         $seller_tax_no = trim($this->params->get('seller_tax_no'));
 
-        $exportShipping = (int) $this->params->get('add_shipping_to_invoice', 0);
         $invoiceMode = $this->params->get('invoice_mode', 'auto');
 
         /** sprawdzamy, czy klient ustawił pole invoice_request, 
@@ -92,13 +103,13 @@ class plgHikashopFakturownia extends JPlugin
         $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
 
         // Buduje pozycje faktury (produkty + wysyłka)
-        $positions = $this->buildPositions($products,$exportShipping, $shippings, $paymentName, $paymentPrice,  $couponCode, $couponValue);
+        $positions = $this->buildPositions($products, $shippings, $paymentName, $paymentPrice,  $couponCode, $couponValue);
 
         // Wysyła fakturę do Fakturowni i pobiera jej ID
         $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug);
 
         // Wysyła płatność powiązaną z fakturą do Fakturowni
-        $this->sendPayment($http, $apiToken, $subdomain, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug);
+        $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug);
 
         // wysyłka produktów do Fakturownia lub robi update istniejących
         foreach ($products as $product) {
@@ -201,7 +212,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
     /**
      * Wysyła płatność powiązaną z fakturą do Fakturowni przez API.
      */
-    private function sendPayment($http, $apiToken, $subdomain, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug)
+    private function sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug)
     {
         $payload = [
             'api_token' => $apiToken,
@@ -210,7 +221,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
                 "client_id" => $userId,
                 "comment" => null,
                 "country" => $billing->address_country_name,
-                "currency" => "PLN",
+                "currency" => $currencyCode ?? 'PLN',
                 "deleted" => false,
                 "department_id" => null,
                 "description" => "status confirmed",
@@ -277,7 +288,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
     /**
      * Buduje tablicę pozycji faktury (produkty i wysyłka) na podstawie zamówienia.
      */
-    private function buildPositions($products, $exportShipping, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue)
+    private function buildPositions($products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue)
     {
         $positions = [];
 
@@ -334,8 +345,8 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
             $positions[] = $position;
         }
 
-        // Dodaj pozycje wysyłki (jeśli włączone)
-        if ($exportShipping) {
+        // Dodaj pozycje wysyłki 
+
             foreach ($shippings as $ship) {
                 if (!is_object($ship)) continue;
 
@@ -350,7 +361,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
                     'total_price_gross' => $priceGross,
                 ];
             }
-        }
+       
         // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0
         if ($paymentPrice > 0) {
             $taxRate = 23.0; // domyślnie 23%
