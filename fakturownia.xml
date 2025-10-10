@@ -7,26 +7,24 @@
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
     <copyright>(C) 2025 web-service. All rights reserved.</copyright>
-    <license>MIT</license>
+    <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
     <description>Integracja HikaShop z Fakturownią</description>
 
     <files>
         <filename plugin="fakturownia">fakturownia.php</filename>
     </files>
-
-    <!-- Parametry konfiguracji w Joomla -->
     <config>
         <fields name="params" addfieldpath="/components/com_hikashop/fields">
             <fieldset name="basic" label="Podstawowe ustawienia">
-                <field id="api_token" name="api_token" type="text" label="API Token Fakturownia"
+                <field id="api_token" name="api_token" type="password" label="API Token Fakturownia"
                     description="Wklej tutaj swój token API Fakturownia" size="40" />
                 <field id="subdomain" name="subdomain" type="text" label="Subdomena Fakturownia"
                     description="np. mojadomena (bez .fakturownia.pl)" size="40" />
                 <field
                     name="seller_name"
                     type="text"
-                    default="Nazwa"
-                    label="Nazwa firmy na fakturze musi być zgodna z wpisem w Fakturowni"
+                    default="Nazwa firmy"
+                    label="NAZWA FIRMY, musi być zgodna z wpisem w Fakturowni"
                     description="Wprowadź nazwę firmy, która ma być widoczna na fakturze"
                     filter="raw"
                 />
@@ -34,23 +32,14 @@
                     name="seller_tax_no"
                     type="number"
                     default=""
-                    label="Wstaw numer NIP sprzedawcy na fakturze, musi być zgodny z wpisem w Fakturowni"
+                    label="NIP sprzedawcy, musi być zgodny z wpisem w Fakturowni"
                     description="podaj numer NIP sprzedawcy, zgodny z wpisem w fakturowni"
                     min="0"
                     max="9"
                     step="1"
                 />
                 <field
-                    name="add_shipping_to_invoice"
-                    type="radio"
-                    default="0"
-                    label="Dodaj wysyłkę do faktury"
-                    description="Jeśli zaznaczone TAK, metody wysyłki będą dodawane do Fakturowni jako produkty.">
-                    <option value="0">Nie</option>
-                    <option value="1">Tak</option>
-                </field>
-                <field 
-                    name="invoice_mode" type="list" 
+                    name="invoice_mode" type="list"
                     default="vat"
                     label="Typ dokumentu Fakturowni"
                     description="Wybierz typ dokumentu generowanego przez wtyczkę">
@@ -66,11 +55,17 @@
                     description="Wystaw fakturę, jeśli klient zaznaczy pole w domyślnym adresie rozliczeniowym. 
                     Utwórz pole użytkownika (hikashop->Wyświetlenie->Pola użytkownika) - nazwa kolumny 'invoice_request', tabela 'address' w HikaShop.">
                 </field>
+            </fieldset>
+            <fieldset name="debag" label="Tryb debugowania">
                 <field
-                    type="spacer"
-                    name="myspacer"
-                    hr="true"
-                />
+                    name="debug_order"
+                    type="radio"
+                    default="0"
+                    label="pokaż całe zamówienie w logach"
+                    description="włączasz logowanie tylko wtedy, kiedy debugujesz problem (np. API Fakturowni zwraca błąd).">
+                    <option value="0">Wyłączone</option>
+                    <option value="1">Włączone</option>
+                </field>
                 <field
                     name="debug"
                     type="radio"
@@ -84,5 +79,4 @@
             </fieldset>
         </fields>
     </config>
-
 </extension>
