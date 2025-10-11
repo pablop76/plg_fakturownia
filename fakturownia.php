@@ -351,7 +351,7 @@ private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $b
                 if (!is_object($ship)) continue;
 
                 $priceNet = (float)$ship->shipping_price;
-                $taxRate = 23.0;
+                $taxRate = (float)$ship->order_shipping_tax;
                 $priceGross = $priceNet * (1 + $taxRate / 100);
 
                 $positions[] = [
