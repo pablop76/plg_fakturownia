@@ -12,6 +12,9 @@
 
     <files>
         <filename plugin="fakturownia">fakturownia.php</filename>
+        <languages>
+            <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.sys.ini</language>
+        </languages>
     </files>
     <config>
         <fields name="params" addfieldpath="/components/com_hikashop/fields">
@@ -80,3 +83,4 @@
         </fields>
     </config>
 </extension>
+
