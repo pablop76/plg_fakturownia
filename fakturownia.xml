@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <extension type="plugin" version="3.10" method="upgrade" group="hikashop">
-    <name>Fakturownia integracja Plugin</name>
+    <name>PLG_HIKASHOP_FAKTUROWNIA</name>
     <creationDate>2025-09-21</creationDate>
     <version>1.0.0</version>
     <author>Paweł Półtoraczyk</author>
@@ -8,7 +8,7 @@
     <authorUrl>https://web-service.com.pl</authorUrl>
     <copyright>(C) 2025 web-service. All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
-    <description>Integracja HikaShop z Fakturownią</description>
+    <description>PLG_HIKASHOP_FAKTUROWNIA_DESC</description>
 
     <files>
         <filename plugin="fakturownia">fakturownia.php</filename>
@@ -16,71 +16,79 @@
             <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.sys.ini</language>
         </languages>
     </files>
+
     <config>
         <fields name="params" addfieldpath="/components/com_hikashop/fields">
-            <fieldset name="basic" label="Podstawowe ustawienia">
-                <field id="api_token" name="api_token" type="password" label="API Token Fakturownia"
-                    description="Wklej tutaj swój token API Fakturownia" size="40" />
-                <field id="subdomain" name="subdomain" type="text" label="Subdomena Fakturownia"
-                    description="np. mojadomena (bez .fakturownia.pl)" size="40" />
+            <fieldset name="basic" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_BASIC">
+                <field
+                    id="api_token"
+                    name="api_token"
+                    type="password"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_API_TOKEN_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_API_TOKEN_DESC"
+                    size="40"
+                />
+                <field
+                    id="subdomain"
+                    name="subdomain"
+                    type="text"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_SUBDOMAIN_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_SUBDOMAIN_DESC"
+                    size="40"
+                />
                 <field
                     name="seller_name"
                     type="text"
-                    default="Nazwa firmy"
-                    label="NAZWA FIRMY, musi być zgodna z wpisem w Fakturowni"
-                    description="Wprowadź nazwę firmy, która ma być widoczna na fakturze"
+                    default=""
+                    label="PLG_HIKASHOP_FAKTUROWNIA_SELLER_NAME_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_SELLER_NAME_DESC"
                     filter="raw"
                 />
                 <field
                     name="seller_tax_no"
-                    type="number"
+                    type="text"
                     default=""
-                    label="NIP sprzedawcy, musi być zgodny z wpisem w Fakturowni"
-                    description="podaj numer NIP sprzedawcy, zgodny z wpisem w fakturowni"
-                    min="0"
-                    max="9"
-                    step="1"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_SELLER_TAX_NO_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_SELLER_TAX_NO_DESC"
                 />
                 <field
-                    name="invoice_mode" type="list"
+                    name="invoice_mode"
+                    type="list"
                     default="vat"
-                    label="Typ dokumentu Fakturowni"
-                    description="Wybierz typ dokumentu generowanego przez wtyczkę">
-                    <option value="vat">Faktura VAT</option>
-                    <option value="receipt">Paragon (wymagany moduł paragony.pl)</option>
-                    <option value="auto">Paragon jeśli brak NIP, faktura jeśli jest
-                        NIP (wymagany moduł paragony.pl)</option>
+                    label="PLG_HIKASHOP_FAKTUROWNIA_INVOICE_MODE_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_INVOICE_MODE_DESC">
+                    <option value="vat">PLG_HIKASHOP_FAKTUROWNIA_OPTION_VAT</option>
+                    <option value="receipt">PLG_HIKASHOP_FAKTUROWNIA_OPTION_RECEIPT</option>
+                    <option value="auto">PLG_HIKASHOP_FAKTUROWNIA_OPTION_AUTO</option>
                 </field>
                 <field
                     name="custom_note"
                     type="note"
-                    label="Dodatkowe opcje"
-                    description="Wystaw fakturę, jeśli klient zaznaczy pole w domyślnym adresie rozliczeniowym. 
-                    Utwórz pole użytkownika (hikashop->Wyświetlenie->Pola użytkownika) - nazwa kolumny 'invoice_request', tabela 'address' w HikaShop.">
-                </field>
+                    label="PLG_HIKASHOP_FAKTUROWNIA_CUSTOM_NOTE_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_CUSTOM_NOTE_DESC"
+                />
             </fieldset>
-            <fieldset name="debag" label="Tryb debugowania">
+
+            <fieldset name="debug" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_DEBUG">
                 <field
                     name="debug_order"
                     type="radio"
                     default="0"
-                    label="pokaż całe zamówienie w logach"
-                    description="włączasz logowanie tylko wtedy, kiedy debugujesz problem (np. API Fakturowni zwraca błąd).">
-                    <option value="0">Wyłączone</option>
-                    <option value="1">Włączone</option>
+                    label="PLG_HIKASHOP_FAKTUROWNIA_DEBUG_ORDER_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_DEBUG_ORDER_DESC">
+                    <option value="0">JNO</option>
+                    <option value="1">JYES</option>
                 </field>
                 <field
                     name="debug"
                     type="radio"
                     default="0"
-                    label="debugowanie logów 
-                    administartor/ logs/ hikashop_fakturownia.log"
-                    description="włączasz logowanie tylko wtedy, kiedy debugujesz problem (np. API Fakturowni zwraca błąd).">
-                    <option value="0">Wyłączone</option>
-                    <option value="1">Włączone</option>
+                    label="PLG_HIKASHOP_FAKTUROWNIA_DEBUG_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_DEBUG_DESC">
+                    <option value="0">JNO</option>
+                    <option value="1">JYES</option>
                 </field>
             </fieldset>
         </fields>
     </config>
 </extension>
-
