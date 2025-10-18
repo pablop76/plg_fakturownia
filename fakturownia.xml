@@ -9,13 +9,14 @@
     <copyright>(C) 2025 web-service. All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
     <description>PLG_HIKASHOP_FAKTUROWNIA_DESC</description>
-
     <files>
         <filename plugin="fakturownia">fakturownia.php</filename>
-        <languages>
-            <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.sys.ini</language>
-        </languages>
+        <filename>index.html</filename>
+        <folder>language</folder>
     </files>
+    <languages>
+        <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.sys.ini</language>
+    </languages>
 
     <config>
         <fields name="params" addfieldpath="/components/com_hikashop/fields">
@@ -92,4 +93,5 @@
         </fields>
     </config>
 </extension>
+
 
