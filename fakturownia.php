@@ -22,17 +22,7 @@ class plgHikashopFakturownia extends JPlugin
         $orderFull = $this->getOrderFull($order->order_id);
         if (!$orderFull) return;
 
-        // Dekodujemy parametry zamówienia
-        $orderParams = json_decode($orderFull->order_params, true);
-        if (!is_array($orderParams)) $orderParams = [];
-
-        // Sprawdzamy, czy faktura została już wysłana
-        if (!empty($orderParams['fakturownia_invoice_sent'])) {
-            $this->log($logFile, "Faktura już wysłana dla zamówienia {$orderFull->order_id}, wychodzimy.");
-            return;
-        }
-
-        // Dane całego zamówienia w logu
+        //dane całego zamówienia w logu
         if ($debugOrder) $this->logOrder($logFile, $orderFull);
 
         if (empty($orderFull->order_status) || $orderFull->order_status !== 'confirmed') {
@@ -45,68 +35,87 @@ class plgHikashopFakturownia extends JPlugin
         $customer = $orderFull->customer ?? new stdClass;
         $products = $orderFull->products ?? [];
         $shippings = $orderFull->shippings ?? [];
+        //waluta zamówienia
         $orderCurrencyInfo = $orderFull->order_currency_info ?? new stdClass;
         $obj = unserialize($orderCurrencyInfo);
 
-        $currencyCode = ($obj && isset($obj->currency_code)) ? $obj->currency_code : 'PLN';
+        if ($obj && isset($obj->currency_code)) {
+            $currencyCode = $obj->currency_code; // Wynik: PLN
+        } else {
+            echo "Nie udało się odczytać waluty.";
+        }
 
+
+
+        //koszt metody płatności np. "Płatność przy odbiorze"
+        //nazwa np. "Płatność przy odbiorze"
         $paymentName = $orderFull->payment->payment_name ?? '';
+        //kwota netto
         $paymentPrice = isset($orderFull->payment->payment_price) ? (float)$orderFull->payment->payment_price : 0.0;
+        
+        // Dane kuponu rabatowego (jeśli istnieje)
         $couponCode = $orderFull->order_discount_code ?? '';
         $couponValue = isset($orderFull->order_discount_price) ? (float)$orderFull->order_discount_price : 0.0;
 
         $apiToken = trim($this->params->get('api_token'));
         $subdomain = trim($this->params->get('subdomain'));
+
         $seller_name = trim($this->params->get('seller_name'));
         $seller_tax_no = trim($this->params->get('seller_tax_no'));
+
         $invoiceMode = $this->params->get('invoice_mode', 'auto');
 
-        // Sprawdzamy, czy klient chce fakturę
+        /** sprawdzamy, czy klient ustawił pole invoice_request, 
+         * czy chce fakturę 
+         */ 
         $clientWantsInvoice = false;
-        if ((isset($order->invoice_request) && !empty($order->invoice_request)) ||
-            (isset($billing->invoice_request) && !empty($billing->invoice_request)) ||
-            (isset($user->invoice_request) && !empty($user->invoice_request))
-        ) {
+        if (isset($order->invoice_request) && !empty($order->invoice_request)) {
+            $clientWantsInvoice = true;
+        } elseif (isset($billing->invoice_request) && !empty($billing->invoice_request)) {
+            $clientWantsInvoice = true;
+        } elseif (isset($user->invoice_request) && !empty($user->invoice_request)) {
             $clientWantsInvoice = true;
         }
 
-        // Wybór rodzaju dokumentu
+        // logika wyboru typu dokumentu
         if ($clientWantsInvoice) {
             $invoiceKind = 'vat';
         } else {
-            if ($invoiceMode === 'vat') $invoiceKind = 'vat';
-            elseif ($invoiceMode === 'receipt') $invoiceKind = 'receipt';
-            else $invoiceKind = empty($billing->address_vat) ? 'receipt' : 'vat';
+            if ($invoiceMode === 'vat') {
+                $invoiceKind = 'vat';
+            } elseif ($invoiceMode === 'receipt') {
+                $invoiceKind = 'receipt';
+            } else { // auto
+                $invoiceKind = empty($billing->address_vat) ? 'receipt' : 'vat';
+            }
         }
 
+        /** Utwórz obiekt klienta HTTP w Joomla, 
+         * który umożliwia wykonywanie zapytań sieciowych 
+         * — np. GET, POST, PUT itp. 
+         */ 
         $http = HttpFactory::getHttp();
+
         $userEmail = $customer->user_email ?? 'Brak danych';
         $userId = $customer->user_id ?? 'Brak danych';
 
-        // Wysyłamy klienta do Fakturowni
+        // Wysyła dane klienta do Fakturowni
         $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
 
-        // Budujemy pozycje faktury
+        // Buduje pozycje faktury (produkty + wysyłka)
         $positions = $this->buildPositions($products, $shippings, $paymentName, $paymentPrice,  $couponCode, $couponValue);
 
-        // Wysyłamy fakturę i pobieramy jej ID
+        // Wysyła fakturę do Fakturowni i pobiera jej ID
         $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $logFile, $debug);
 
-        // Wysyłamy płatność
+        // Wysyła płatność powiązaną z fakturą do Fakturowni
         $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $userId, $invoiceId, $logFile, $debug);
 
-        // Oznaczamy zamówienie jako wysłane do Fakturowni
-        $orderParams['fakturownia_invoice_sent'] = 1;
-        $orderClass = hikashop_get('class.order');
-        $orderClass->saveOrderParams($orderFull->order_id, json_encode($orderParams));
-        $this->log($logFile, "Oznaczono zamówienie {$orderFull->order_id} jako wysłane do Fakturowni.");
-
-        // Dodajemy produkty do Fakturowni
+        // wysyłka produktów do Fakturownia lub robi update istniejących
         foreach ($products as $product) {
             $this->addOrUpdateProductToFakturownia($http, $apiToken, $subdomain, $product, $logFile, $debug);
-        }
+        }       
     }
-
 
     /**
      * Tworzy plik logu jeśli nie istnieje.
@@ -149,56 +158,56 @@ class plgHikashopFakturownia extends JPlugin
     /**
      * Wysyła dane klienta do Fakturowni przez API lub aktualizuje istniejącego.
      */
-    private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug)
-    {
-        // budujemy payload
-        $payload = [
-            'api_token' => $apiToken,
-            'client' => [
-                'name' => $billing->address_company ?: ($billing->address_firstname . ' ' . $billing->address_lastname),
-                'tax_no' => $billing->address_vat,
-                'bank' => '',
-                'bank_account' => '',
-                'city' => $billing->address_city,
-                'country' => $billing->address_country_name,
-                'email' => $userEmail,
-                'person' => $billing->address_firstname . ' ' . $billing->address_lastname,
-                'post_code' => $billing->address_post_code,
-                'phone' => $billing->address_telephone,
-                'street' => $billing->address_street
-            ]
-        ];
+private function addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug)
+{
+    // budujemy payload
+    $payload = [
+        'api_token' => $apiToken,
+        'client' => [
+            'name' => $billing->address_company ?: ($billing->address_firstname . ' ' . $billing->address_lastname),
+            'tax_no' => $billing->address_vat,
+            'bank' => '',
+            'bank_account' => '',
+            'city' => $billing->address_city,
+            'country' => $billing->address_country_name,
+            'email' => $userEmail,
+            'person' => $billing->address_firstname . ' ' . $billing->address_lastname,
+            'post_code' => $billing->address_post_code,
+            'phone' => $billing->address_telephone,
+            'street' => $billing->address_street
+        ]
+    ];
 
-        try {
-            // 1. wyszukiwanie klienta po emailu lub NIP
-            $searchUrl = 'https://' . $subdomain . '.fakturownia.pl/clients.json?api_token='
-                . $apiToken . '&email=' . urlencode($userEmail);
-            $searchResponse = $http->get($searchUrl, ['Accept' => 'application/json']);
-            $clients = json_decode($searchResponse->body, true);
+    try {
+        // 1. wyszukiwanie klienta po emailu lub NIP
+        $searchUrl = 'https://' . $subdomain . '.fakturownia.pl/clients.json?api_token='
+                     . $apiToken . '&email=' . urlencode($userEmail);
+        $searchResponse = $http->get($searchUrl, ['Accept'=>'application/json']);
+        $clients = json_decode($searchResponse->body, true);
 
-            if (!empty($clients) && isset($clients[0]['id'])) {
-                // klient istnieje → aktualizujemy
-                $clientId = $clients[0]['id'];
-                $url = 'https://' . $subdomain . '.fakturownia.pl/clients/' . $clientId . '.json';
-                $response = $http->put($url, json_encode($payload), [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json'
-                ]);
-                if ($debug) $this->log($logFile, "Zaktualizowano klienta ID {$clientId}: {$response->code}");
-            } else {
-                // brak klienta → tworzymy nowego
-                $url = 'https://' . $subdomain . '.fakturownia.pl/clients.json';
-                $response = $http->post($url, json_encode($payload), [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json'
-                ]);
-                if ($debug) $this->log($logFile, "Dodano nowego klienta: {$response->code}");
-            }
-        } catch (\Exception $e) {
-            if ($debug) $this->log($logFile, "Wyjątek API client: " . $e->getMessage());
-            Factory::getApplication()->enqueueMessage('Wyjątek API Fakturowni (client): ' . $e->getMessage(), 'error');
+        if (!empty($clients) && isset($clients[0]['id'])) {
+            // klient istnieje → aktualizujemy
+            $clientId = $clients[0]['id'];
+            $url = 'https://' . $subdomain . '.fakturownia.pl/clients/' . $clientId . '.json';
+            $response = $http->put($url, json_encode($payload), [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json'
+            ]);
+            if ($debug) $this->log($logFile, "Zaktualizowano klienta ID {$clientId}: {$response->code}");
+        } else {
+            // brak klienta → tworzymy nowego
+            $url = 'https://' . $subdomain . '.fakturownia.pl/clients.json';
+            $response = $http->post($url, json_encode($payload), [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json'
+            ]);
+            if ($debug) $this->log($logFile, "Dodano nowego klienta: {$response->code}");
         }
+    } catch (\Exception $e) {
+        if ($debug) $this->log($logFile, "Wyjątek API client: " . $e->getMessage());
+        Factory::getApplication()->enqueueMessage('Wyjątek API Fakturowni (client): ' . $e->getMessage(), 'error');
     }
+}
 
     /**
      * Wysyła płatność powiązaną z fakturą do Fakturowni przez API.
@@ -264,7 +273,7 @@ class plgHikashopFakturownia extends JPlugin
                 $paymentId = $data['id'] ?? null;
                 Factory::getApplication()->enqueueMessage(
                     'Zarejestrowano płatność w Fakturowni. Payment ID: ' . $paymentId .
-                        ($invoiceId ? ', Invoice ID: ' . $invoiceId : ''),
+                    ($invoiceId ? ', Invoice ID: ' . $invoiceId : ''),
                     'message'
                 );
             } else {
@@ -338,21 +347,21 @@ class plgHikashopFakturownia extends JPlugin
 
         // Dodaj pozycje wysyłki 
 
-        foreach ($shippings as $ship) {
-            if (!is_object($ship)) continue;
+            foreach ($shippings as $ship) {
+                if (!is_object($ship)) continue;
 
-            $priceNet = (float)$ship->shipping_price;
-            $taxRate = (float)$ship->order_shipping_tax;
-            $priceGross = $priceNet * (1 + $taxRate / 100);
+                $priceNet = (float)$ship->shipping_price;
+                $taxRate = (float)$ship->order_shipping_tax;
+                $priceGross = $priceNet * (1 + $taxRate / 100);
 
-            $positions[] = [
-                'name' => 'Wysyłka: ' . $ship->shipping_name,
-                'quantity' => 1,
-                'tax' => $taxRate,
-                'total_price_gross' => $priceGross,
-            ];
-        }
-
+                $positions[] = [
+                    'name' => 'Wysyłka: ' . $ship->shipping_name,
+                    'quantity' => 1,
+                    'tax' => $taxRate,
+                    'total_price_gross' => $priceGross,
+                ];
+            }
+       
         // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0
         if ($paymentPrice > 0) {
             $taxRate = 23.0; // domyślnie 23%
@@ -438,21 +447,18 @@ class plgHikashopFakturownia extends JPlugin
                 $invoiceData = json_decode($response->body, true);
                 $invoiceId = $invoiceData['id'] ?? null;
                 Factory::getApplication()->enqueueMessage(
-                    'Utworzono fakturę w Fakturowni. ID: ' . $invoiceId,
-                    'message'
+                    'Utworzono fakturę w Fakturowni. ID: ' . $invoiceId, 'message'
                 );
                 return $invoiceId;
             } else {
                 Factory::getApplication()->enqueueMessage(
-                    'Błąd tworzenia faktury: ' . $response->body,
-                    'error'
+                    'Błąd tworzenia faktury: ' . $response->body, 'error'
                 );
                 return null;
             }
         } catch (\Exception $e) {
             Factory::getApplication()->enqueueMessage(
-                'Wyjątek API Fakturowni (invoice): ' . $e->getMessage(),
-                'error'
+                'Wyjątek API Fakturowni (invoice): ' . $e->getMessage(), 'error'
             );
             return null;
         }
@@ -492,7 +498,7 @@ class plgHikashopFakturownia extends JPlugin
         try {
             // 1️⃣ Pobierz listę produktów z filtrem search
             $searchUrl = 'https://' . $subdomain . '.fakturownia.pl/products.json?api_token='
-                . $apiToken . '&search=' . urlencode($productCode);
+                        . $apiToken . '&search=' . urlencode($productCode);
 
             $searchResponse = $http->get($searchUrl, ['Accept' => 'application/json']);
             $productsList = json_decode($searchResponse->body, true);
@@ -534,6 +540,7 @@ class plgHikashopFakturownia extends JPlugin
                 \Joomla\CMS\Factory::getApplication()
                     ->enqueueMessage('Błąd API Fakturowni (product): ' . $response->body, 'error');
             }
+
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Wyjątek API product: " . $e->getMessage());
             \Joomla\CMS\Factory::getApplication()
