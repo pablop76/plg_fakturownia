@@ -438,7 +438,7 @@ class plgHikashopFakturownia extends JPlugin
             if (!is_object($ship)) continue;
 
             $priceNet = (float)$ship->shipping_price;
-            $taxRate = (float)$ship->order_shipping_tax;
+            $taxRate = (float)($ship->order_shipping_tax ?? 0);
             $priceGross = $priceNet * (1 + $taxRate / 100);
 
             $positions[] = [
@@ -626,3 +626,4 @@ class plgHikashopFakturownia extends JPlugin
         }
     }
 }
+
