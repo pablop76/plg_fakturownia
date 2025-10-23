@@ -76,7 +76,9 @@ class plgHikashopFakturownia extends JPlugin
         $seller_name = trim($this->params->get('seller_name'));
         $seller_tax_no = trim($this->params->get('seller_tax_no'));
 
-        $invoiceMode = $this->params->get('invoice_mode', 'auto');
+        $invoiceMode = $this->params->get('invoice_mode', 'vat');
+
+        $autoSendEmail = $this->params->get('auto_send_email', 0);
 
         /** sprawdzamy, czy klient ustawił pole invoice_request */
         $clientWantsInvoice = $this->checkIfClientWantsInvoice($order, $billing, $customer);
@@ -103,6 +105,11 @@ class plgHikashopFakturownia extends JPlugin
             if ($invoiceId) {
                 // 4. Zapisujemy ID faktury w zamówieniu (zapobiega duplikatom)
                 $this->saveInvoiceIdToOrder($orderFull, $invoiceId);
+
+                if ($autoSendEmail) {
+                    $this->sendInvoiceByEmail($http, $apiToken, $subdomain, $invoiceId, $logFile, $debug);
+                }
+
 
                 // 5. Wysyła płatność powiązaną z fakturą do Fakturowni
                 $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $logFile, $debug);
@@ -625,5 +632,28 @@ class plgHikashopFakturownia extends JPlugin
             if ($debug) $this->log($logFile, "Wyjątek API product: " . $e->getMessage());
         }
     }
-}
+    /**
+     * Wysyła fakturę e-mailem do klienta przez API Fakturowni.
+     */
+    private function sendInvoiceByEmail($http, $apiToken, $subdomain, $invoiceId, $logFile, $debug)
+    {
+        try {
+            $url = 'https://' . $subdomain . '.fakturownia.pl/invoices/' . $invoiceId . '/send_by_email.json?api_token=' . $apiToken;
+            $response = $http->post($url, '', [
+                'Accept' => 'application/json'
+            ]);
 
+            if ($debug) {
+                $this->log($logFile, "Wysłano fakturę e-mailem (Invoice ID: {$invoiceId}), kod odpowiedzi: {$response->code}");
+            }
+
+            if (!in_array($response->code, [200, 201])) {
+                $this->log($logFile, "Błąd wysyłania e-maila z fakturą (Invoice ID: {$invoiceId}): {$response->body}");
+            }
+        } catch (\Exception $e) {
+            if ($debug) {
+                $this->log($logFile, "Wyjątek send_by_email: " . $e->getMessage());
+            }
+        }
+    }
+}
