@@ -128,19 +128,19 @@ class plgHikashopFakturownia extends JPlugin
     }
 
     /**
-     * Sprawdza czy faktura już została utworzona dla tego zamówienia
+     * Sprawdza czy faktura lub paragon już zostały utworzone dla tego zamówienia
      */
     private function invoiceAlreadyExists($orderFull)
     {
-        // Sprawdź w custom_fields zamówienia czy zapisano ID faktury
         if (isset($orderFull->order_params) && !empty($orderFull->order_params)) {
             $params = is_string($orderFull->order_params) ? json_decode($orderFull->order_params, true) : (array)$orderFull->order_params;
-            if (isset($params['fakturownia_invoice_id']) && !empty($params['fakturownia_invoice_id'])) {
+            if (!empty($params['fakturownia_document_id'])) {
                 return true;
             }
         }
         return false;
     }
+
 
     /**
      * Zapisuje ID faktury w parametrach zamówienia
@@ -164,8 +164,8 @@ class plgHikashopFakturownia extends JPlugin
                 $params = json_decode($currentParams, true) ?: [];
             }
 
-            // Dodaj ID faktury
-            $params['fakturownia_invoice_id'] = $invoiceId;
+            // Dodaj ID faktury lub paragonu
+            $params['fakturownia_document_id'] = $invoiceId;
             $params['fakturownia_processed'] = date('Y-m-d H:i:s');
 
             // Zapisz z powrotem
