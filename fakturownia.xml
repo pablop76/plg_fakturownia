@@ -63,6 +63,15 @@
                     <option value="auto">PLG_HIKASHOP_FAKTUROWNIA_OPTION_AUTO</option>
                 </field>
                 <field
+                    name="auto_send_email"
+                    type="radio"
+                    default="0"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_AUTO_SEND_EMAIL_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_AUTO_SEND_EMAIL_DESC">
+                    <option value="1">Tak</option>
+                    <option value="0">Nie</option>
+                </field>
+                <field
                     name="custom_note"
                     type="note"
                     label="PLG_HIKASHOP_FAKTUROWNIA_CUSTOM_NOTE_LABEL"
@@ -93,5 +102,3 @@
         </fields>
     </config>
 </extension>
-
-
