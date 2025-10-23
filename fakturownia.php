@@ -96,6 +96,10 @@ class plgHikashopFakturownia extends JPlugin
             // 1. Wysyła dane klienta do Fakturowni
             $clientId = $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
 
+            if (!$clientId) {
+                throw new \Exception('Nie udało się utworzyć/znaleźć klienta w Fakturowni');
+            }
+
             // 2. Buduje pozycje faktury
             $positions = $this->buildPositions($products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
 
@@ -110,7 +114,6 @@ class plgHikashopFakturownia extends JPlugin
                     $this->sendInvoiceByEmail($http, $apiToken, $subdomain, $invoiceId, $logFile, $debug);
                 }
 
-
                 // 5. Wysyła płatność powiązaną z fakturą do Fakturowni
                 $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $logFile, $debug);
 
@@ -123,7 +126,7 @@ class plgHikashopFakturownia extends JPlugin
             }
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Błąd przetwarzania zamówienia {$orderId}: " . $e->getMessage());
-            Factory::getApplication()->enqueueMessage('Błąd przetwarzania zamówienia w Fakturowni: ' . $e->getMessage(), 'error');
+            // Nie pokazuj błędów użytkownikowi - to tylko integracja
         }
     }
 
@@ -140,7 +143,6 @@ class plgHikashopFakturownia extends JPlugin
         }
         return false;
     }
-
 
     /**
      * Zapisuje ID faktury w parametrach zamówienia
@@ -311,8 +313,7 @@ class plgHikashopFakturownia extends JPlugin
             return $clientId;
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Wyjątek API client: " . $e->getMessage());
-            Factory::getApplication()->enqueueMessage('Wyjątek API Fakturowni (client): ' . $e->getMessage(), 'error');
-            return null;
+            throw new \Exception('Błąd API Fakturowni (client): ' . $e->getMessage());
         }
     }
 
@@ -384,6 +385,7 @@ class plgHikashopFakturownia extends JPlugin
             }
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Wyjątek API payments: " . $e->getMessage());
+            // Nie rzucamy wyjątku - płatność jest drugorzędna
         }
     }
 
@@ -549,11 +551,11 @@ class plgHikashopFakturownia extends JPlugin
                 return $invoiceId;
             } else {
                 $this->log($logFile, "Błąd tworzenia faktury: {$response->body}");
-                return null;
+                throw new \Exception("Błąd API Fakturownia: {$response->code}");
             }
         } catch (\Exception $e) {
             $this->log($logFile, "Wyjątek API invoice: " . $e->getMessage());
-            return null;
+            throw new \Exception('Błąd tworzenia faktury: ' . $e->getMessage());
         }
     }
 
@@ -630,8 +632,10 @@ class plgHikashopFakturownia extends JPlugin
             }
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Wyjątek API product: " . $e->getMessage());
+            // Nie rzucamy wyjątku - produkt jest drugorzędny
         }
     }
+
     /**
      * Wysyła fakturę e-mailem do klienta przez API Fakturowni.
      */
