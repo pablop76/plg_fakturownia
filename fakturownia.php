@@ -65,6 +65,10 @@ class plgHikashopFakturownia extends JPlugin
         //koszt metody płatności
         $paymentName = $orderFull->payment->payment_name ?? '';
         $paymentPrice = isset($orderFull->payment->payment_price) ? (float)$orderFull->payment->payment_price : 0.0;
+        $paymentMethod = $this->mapPaymentMethod($paymentName);
+
+        // Data płatności - używamy rzeczywistej daty zamiast 00:00
+        $paymentDate = date('Y-m-d H:i:s', $orderFull->order_created);
 
         // Dane kuponu rabatowego
         $couponCode = $orderFull->order_discount_code ?? '';
@@ -115,7 +119,7 @@ class plgHikashopFakturownia extends JPlugin
                 }
 
                 // 5. Wysyła płatność powiązaną z fakturą do Fakturowni
-                $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $logFile, $debug);
+                $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $paymentMethod, $paymentDate, $logFile, $debug);
 
                 // 6. Wysyłka produktów do Fakturownia
                 foreach ($products as $product) {
@@ -127,6 +131,110 @@ class plgHikashopFakturownia extends JPlugin
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Błąd przetwarzania zamówienia {$orderId}: " . $e->getMessage());
             // Nie pokazuj błędów użytkownikowi - to tylko integracja
+        }
+    }
+
+    /**
+     * Mapuje metodę płatności Hikashop na typ płatności Fakturownia
+     */
+    private function mapPaymentMethod($paymentName)
+    {
+        $paymentName = strtolower(trim($paymentName));
+
+        $mapping = [
+            'payu' => 'payu',
+            'przelewy24' => 'p24',
+            'przelew' => 'transfer',
+            'transfer' => 'transfer',
+            'gotówka' => 'cash',
+            'cash' => 'cash',
+            'karta' => 'card',
+            'card' => 'card',
+            'blik' => 'blik',
+            'dotpay' => 'dotpay',
+            'tpay' => 'tpay',
+            'paypal' => 'paypal'
+        ];
+
+        foreach ($mapping as $key => $value) {
+            if (strpos($paymentName, $key) !== false) {
+                return $value;
+            }
+        }
+
+        // Domyślnie przelew
+        return 'transfer';
+    }
+
+    /**
+     * Wysyła płatność powiązaną z fakturą do Fakturowni przez API.
+     */
+    private function sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $paymentMethod, $paymentDate, $logFile, $debug)
+    {
+        $payload = [
+            'api_token' => $apiToken,
+            'banking_payment' => [
+                "city" => $shipping->address_city ?? $billing->address_city,
+                "client_id" => $clientId,
+                "comment" => null,
+                "country" => $billing->address_country_name ?? '',
+                "currency" => $currencyCode ?? 'PLN',
+                "deleted" => false,
+                "department_id" => null,
+                "description" => "Płatność za zamówienie id:" . $orderFull->order_id,
+                "email" => $userEmail,
+                "first_name" => $billing->address_firstname ?? '',
+                "generate_invoice" => false,
+                "invoice_city" => $billing->address_city ?? '',
+                "invoice_comment" => "",
+                "invoice_country" => $billing->address_country_name ?? '',
+                "invoice_id" => $invoiceId,
+                "invoice_name" => $billing->address_company ?? ($billing->address_firstname . ' ' . $billing->address_lastname),
+                "invoice_post_code" => $billing->address_post_code ?? '',
+                "invoice_street" => $billing->address_street ?? '',
+                "invoice_tax_no" => $billing->address_vat ?? '',
+                "last_name" => $billing->address_lastname ?? '',
+                "name" => "Płatność za zamówienie id:" . $orderFull->order_id,
+                "oid" => "",
+                "paid" => true,
+                "paid_date" => $paymentDate, // Używamy dokładnej daty z godziną
+                "phone" => $billing->address_telephone ?? '',
+                "post_code" => $billing->address_post_code ?? '',
+                "price" => $orderFull->order_full_price,
+                "product_id" => 1,
+                "promocode" => "",
+                "provider" => $paymentMethod, // Używamy zmapowanej metody płatności
+                "provider_response" => null,
+                "provider_status" => null,
+                "provider_title" => $orderFull->payment->payment_name ?? 'Płatność online',
+                "quantity" => 1,
+                "street" => $billing->address_street ?? '',
+                "kind" => "api"
+            ]
+        ];
+
+        if ($debug) {
+            $logEmail = preg_replace('/^(.).+(@.+)$/', '$1***$2', $userEmail);
+            $this->log($logFile, "Wysyłamy payment JSON (masked email {$logEmail}, method: {$paymentMethod}, date: {$paymentDate})");
+        }
+
+        try {
+            $url = 'https://' . $subdomain . '.fakturownia.pl/banking/payments.json';
+            $response = $http->post($url, json_encode($payload), [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json'
+            ]);
+            if ($debug) $this->log($logFile, "Odpowiedź API payments: {$response->code}");
+            if (in_array($response->code, [200, 201])) {
+                $data = json_decode($response->body, true);
+                $paymentId = $data['id'] ?? null;
+                if ($debug) $this->log($logFile, "Utworzono płatność ID: {$paymentId}, typ: {$paymentMethod}");
+            } else {
+                $this->log($logFile, "Błąd tworzenia płatności: {$response->body}");
+            }
+        } catch (\Exception $e) {
+            if ($debug) $this->log($logFile, "Wyjątek API payments: " . $e->getMessage());
+            // Nie rzucamy wyjątku - płatność jest drugorzędna
         }
     }
 
@@ -314,78 +422,6 @@ class plgHikashopFakturownia extends JPlugin
         } catch (\Exception $e) {
             if ($debug) $this->log($logFile, "Wyjątek API client: " . $e->getMessage());
             throw new \Exception('Błąd API Fakturowni (client): ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Wysyła płatność powiązaną z fakturą do Fakturowni przez API.
-     */
-    private function sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $logFile, $debug)
-    {
-        $payload = [
-            'api_token' => $apiToken,
-            'banking_payment' => [
-                "city" => $shipping->address_city ?? $billing->address_city,
-                "client_id" => $clientId,
-                "comment" => null,
-                "country" => $billing->address_country_name ?? '',
-                "currency" => $currencyCode ?? 'PLN',
-                "deleted" => false,
-                "department_id" => null,
-                "description" => "Płatność za zamówienie id:" . $orderFull->order_id,
-                "email" => $userEmail,
-                "first_name" => $billing->address_firstname ?? '',
-                "generate_invoice" => false,
-                "invoice_city" => $billing->address_city ?? '',
-                "invoice_comment" => "",
-                "invoice_country" => $billing->address_country_name ?? '',
-                "invoice_id" => $invoiceId,
-                "invoice_name" => $billing->address_company ?? ($billing->address_firstname . ' ' . $billing->address_lastname),
-                "invoice_post_code" => $billing->address_post_code ?? '',
-                "invoice_street" => $billing->address_street ?? '',
-                "invoice_tax_no" => $billing->address_vat ?? '',
-                "last_name" => $billing->address_lastname ?? '',
-                "name" => "Płatność za zamówienie id:" . $orderFull->order_id,
-                "oid" => "",
-                "paid" => true,
-                "paid_date" => date('Y-m-d', $orderFull->order_created),
-                "phone" => $billing->address_telephone ?? '',
-                "post_code" => $billing->address_post_code ?? '',
-                "price" => $orderFull->order_full_price,
-                "product_id" => 1,
-                "promocode" => "",
-                "provider" => "transfer",
-                "provider_response" => null,
-                "provider_status" => null,
-                "provider_title" => null,
-                "quantity" => 1,
-                "street" => $billing->address_street ?? '',
-                "kind" => "api"
-            ]
-        ];
-
-        if ($debug) {
-            $logEmail = preg_replace('/^(.).+(@.+)$/', '$1***$2', $userEmail);
-            $this->log($logFile, "Wysyłamy payment JSON (masked email {$logEmail})");
-        }
-
-        try {
-            $url = 'https://' . $subdomain . '.fakturownia.pl/banking/payments.json';
-            $response = $http->post($url, json_encode($payload), [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ]);
-            if ($debug) $this->log($logFile, "Odpowiedź API payments: {$response->code}");
-            if (in_array($response->code, [200, 201])) {
-                $data = json_decode($response->body, true);
-                $paymentId = $data['id'] ?? null;
-                if ($debug) $this->log($logFile, "Utworzono płatność ID: {$paymentId}");
-            } else {
-                $this->log($logFile, "Błąd tworzenia płatności: {$response->body}");
-            }
-        } catch (\Exception $e) {
-            if ($debug) $this->log($logFile, "Wyjątek API payments: " . $e->getMessage());
-            // Nie rzucamy wyjątku - płatność jest drugorzędna
         }
     }
 
