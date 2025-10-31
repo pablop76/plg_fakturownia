@@ -105,7 +105,7 @@ class plgHikashopFakturownia extends JPlugin
             }
 
             // 2. Buduje pozycje faktury
-            $positions = $this->buildPositions($products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
+            $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
 
             // 3. Wysyła fakturę do Fakturowni i pobiera jej ID
             $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $seller_name, $seller_tax_no, $invoiceKind, $clientId, $logFile, $debug);
@@ -428,7 +428,7 @@ class plgHikashopFakturownia extends JPlugin
     /**
      * Buduje tablicę pozycji faktury (produkty i wysyłka) na podstawie zamówienia.
      */
-    private function buildPositions($products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue)
+    private function buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue)
     {
         $positions = [];
 
@@ -509,14 +509,19 @@ class plgHikashopFakturownia extends JPlugin
 
         // Dodaj pozycję kuponu rabatowego
         if (!empty($couponCode) && $couponValue > 0) {
+            // obliczenie stawki VAT dla rabatu kwota rabatu i kwota podatku rabatu
+            $order_discount_price = $orderFull->order_discount_price;
+            $order_discount_tax = $orderFull->order_discount_tax;
+
+            $vatRate = ($order_discount_tax / ($order_discount_price - $order_discount_tax)) * 100;
+            $vatRate = round($vatRate, 2);
             $positions[] = [
                 'name' => 'Kupon rabatowy: ' . $couponCode,
                 'quantity' => 1,
-                'tax' => 23.0,
+                'tax' =>  $vatRate,
                 'total_price_gross' => round(-1 * $couponValue, 2),
             ];
         }
-
         return $positions;
     }
 
