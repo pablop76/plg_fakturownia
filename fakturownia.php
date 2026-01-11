@@ -479,20 +479,39 @@ class plgHikashopFakturownia extends JPlugin
         }
 
         // Dodaj pozycje wysyłki 
-        foreach ($shippings as $ship) {
-            if (!is_object($ship)) continue;
+            foreach ($shippings as $ship) {
+                if (!is_object($ship)) continue;
 
-            $priceNet = (float)$ship->shipping_price;
-            $taxRate = (float)($ship->order_shipping_tax ?? 0);
-            $priceGross = $priceNet * (1 + $taxRate / 100);
+                $priceNet = (float)$ship->shipping_price;
+                // Some HikaShop payloads don't provide order_shipping_tax.
+                // Prefer tax info when available, otherwise fall back to 0%.
+                if (isset($ship->order_shipping_tax)) {
+                    $taxRate = (float)$ship->order_shipping_tax;
+                } elseif (!empty($ship->shipping_tax_info)) {
+                    $taxInfos = (array)$ship->shipping_tax_info;
+                    $firstTax = reset($taxInfos);
+                    if (is_object($firstTax)) $firstTax = (array)$firstTax;
+                    if (isset($firstTax['tax_rate'])) {
+                        $taxRate = (float)$firstTax['tax_rate'] * 100;
+                    } else {
+                        $taxRate = 0.0;
+                    }
+                } elseif (isset($ship->shipping_tax)) {
+                    $val = (float)$ship->shipping_tax;
+                    $taxRate = ($val > 0 && $val <= 1) ? ($val * 100) : $val;
+                } else {
+                    $taxRate = 0.0;
+                }
 
-            $positions[] = [
-                'name' => 'Wysyłka: ' . $ship->shipping_name,
-                'quantity' => 1,
-                'tax' => $taxRate,
-                'total_price_gross' => round($priceGross, 2),
-            ];
-        }
+                $priceGross = $priceNet * (1 + $taxRate / 100);
+
+                $positions[] = [
+                    'name' => 'Wysyłka: ' . $ship->shipping_name,
+                    'quantity' => 1,
+                    'tax' => $taxRate,
+                    'total_price_gross' => round($priceGross, 2),
+                ];
+            }
 
         // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0
         if ($paymentPrice > 0) {
