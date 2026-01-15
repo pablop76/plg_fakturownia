@@ -1,20 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<extension type="plugin" version="3.10" method="upgrade" group="hikashop">
+<extension type="plugin" version="5.0" method="upgrade" group="hikashop">
     <name>PLG_HIKASHOP_FAKTUROWNIA</name>
-    <creationDate>2025-09-21</creationDate>
-    <version>1.0.0</version>
+    <creationDate>2025-01-15</creationDate>
+    <version>2.0.0</version>
     <author>Paweł Półtoraczyk</author>
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
     <copyright>(C) 2025 web-service. All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
     <description>PLG_HIKASHOP_FAKTUROWNIA_DESC</description>
+
+    <namespace path="src">Pablop76\Plugin\Hikashop\Fakturownia</namespace>
+
     <files>
         <filename plugin="fakturownia">fakturownia.php</filename>
         <filename>index.html</filename>
         <folder>language</folder>
+        <folder>services</folder>
+        <folder>src</folder>
     </files>
+
     <languages>
+        <language tag="en-GB">language/en-GB/plg_hikashop_fakturownia.ini</language>
+        <language tag="en-GB">language/en-GB/plg_hikashop_fakturownia.sys.ini</language>
+        <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.ini</language>
         <language tag="pl-PL">language/pl-PL/plg_hikashop_fakturownia.sys.ini</language>
     </languages>
 
