@@ -20,6 +20,8 @@
         <folder>src</folder>
     </files>
 
+    <scriptfile>script.php</scriptfile>
+
     <languages>
         <language tag="en-GB">language/en-GB/plg_hikashop_fakturownia.ini</language>
         <language tag="en-GB">language/en-GB/plg_hikashop_fakturownia.sys.ini</language>
@@ -80,12 +82,6 @@
                     <option value="1">Tak</option>
                     <option value="0">Nie</option>
                 </field>
-                <field
-                    name="custom_note"
-                    type="note"
-                    label="PLG_HIKASHOP_FAKTUROWNIA_CUSTOM_NOTE_LABEL"
-                    description="PLG_HIKASHOP_FAKTUROWNIA_CUSTOM_NOTE_DESC"
-                />
             </fieldset>
 
             <fieldset name="debug" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_DEBUG">

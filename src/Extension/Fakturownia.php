@@ -14,6 +14,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Http\HttpFactory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Event\SubscriberInterface;
 
@@ -157,6 +158,15 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $invoiceMode = $this->params->get('invoice_mode', 'vat');
         $autoSendEmail = $this->params->get('auto_send_email', 0);
 
+        // Walidacja konfiguracji - loguj błędy konfiguracji
+        $configErrors = $this->validateConfig($apiToken, $subdomain, $sellerName, $sellerTaxNo);
+        if (!empty($configErrors)) {
+            $errorMsg = "Fakturownia - błąd konfiguracji (zamówienie #{$orderId}): " . implode(', ', $configErrors);
+            $this->log($logFile, "BŁĄD KONFIGURACJI zamówienia {$orderId}: " . implode(', ', $configErrors));
+            $this->notifyAdmin($errorMsg);
+            return;
+        }
+
         // Sprawdzamy, czy klient ustawił pole invoice_request
         $clientWantsInvoice = $this->checkIfClientWantsInvoice($order, $billing, $customer);
 
@@ -203,10 +213,10 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 }
             }
         } catch (\Exception $e) {
-            if ($debug) {
-                $this->log($logFile, "Błąd przetwarzania zamówienia {$orderId}: " . $e->getMessage());
-            }
-            // Nie pokazuj błędów użytkownikowi - to tylko integracja
+            // Zawsze loguj błędy (niezależnie od ustawienia debug)
+            $errorMsg = "Fakturownia - błąd zamówienia #{$orderId}: " . $e->getMessage();
+            $this->log($logFile, "BŁĄD zamówienia {$orderId}: " . $e->getMessage());
+            $this->notifyAdmin($errorMsg);
         }
     }
 
@@ -462,6 +472,41 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Waliduje konfigurację wtyczki
+     *
+     * @param   string  $apiToken    API token
+     * @param   string  $subdomain   Subdomain
+     * @param   string  $sellerName  Seller name
+     * @param   string  $sellerTaxNo Seller tax number
+     *
+     * @return  array  Lista błędów (pusta jeśli konfiguracja OK)
+     *
+     * @since   2.0.0
+     */
+    private function validateConfig(string $apiToken, string $subdomain, string $sellerName, string $sellerTaxNo): array
+    {
+        $errors = [];
+
+        if (empty($apiToken)) {
+            $errors[] = 'Brak API Token';
+        }
+
+        if (empty($subdomain)) {
+            $errors[] = 'Brak subdomeny';
+        }
+
+        if (empty($sellerName)) {
+            $errors[] = 'Brak nazwy firmy sprzedawcy';
+        }
+
+        if (empty($sellerTaxNo)) {
+            $errors[] = 'Brak NIP sprzedawcy';
+        }
+
+        return $errors;
+    }
+
+    /**
      * Tworzy plik logu jeśli nie istnieje.
      *
      * @param   string  $logFile  Log file path
@@ -474,6 +519,68 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     {
         if (!file_exists($logFile)) {
             file_put_contents($logFile, "Utworzono plik hikashop_fakturownia.log\n");
+        }
+    }
+
+    /**
+     * Zapisuje błąd do historii zamówienia HikaShop
+     *
+     * @param   string  $message  Treść błędu
+     * @param   int     $orderId  ID zamówienia (opcjonalne)
+     *
+     * @return  void
+     *
+     * @since   2.0.0
+     */
+    private function notifyAdmin(string $message, int $orderId = 0): void
+    {
+        try {
+            // Wyodrębnij orderId z wiadomości jeśli nie podano
+            if ($orderId === 0 && preg_match('/#(\d+)/', $message, $matches)) {
+                $orderId = (int) $matches[1];
+            }
+
+            if ($orderId > 0) {
+                // Zapisz błąd do historii zamówienia HikaShop
+                $this->addOrderHistory($orderId, $message);
+            }
+        } catch (\Exception $e) {
+            // Ignoruj - błąd już jest w logu
+        }
+    }
+
+    /**
+     * Dodaje wpis do historii zamówienia HikaShop
+     *
+     * @param   int     $orderId  ID zamówienia
+     * @param   string  $message  Treść wiadomości
+     *
+     * @return  void
+     *
+     * @since   2.0.0
+     */
+    private function addOrderHistory(int $orderId, string $message): void
+    {
+        try {
+            $db = Factory::getContainer()->get('DatabaseDriver');
+
+            $history = new \stdClass();
+            $history->history_order_id = $orderId;
+            $history->history_created = time();
+            $history->history_type = 'fakturownia_error';
+            $history->history_notified = 0;
+            $history->history_data = 'BŁĄD FAKTUROWNIA: ' . $message;
+            $history->history_user_id = 0;
+            $history->history_ip = '';
+            $history->history_new_status = '';
+            $history->history_reason = '';
+            $history->history_payment_id = '';
+            $history->history_payment_method = '';
+            $history->history_amount = 0;
+
+            $db->insertObject('#__hikashop_history', $history);
+        } catch (\Exception $e) {
+            // Ignoruj
         }
     }
 
@@ -947,9 +1054,12 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 return $invoiceId;
             }
 
-            $this->log($logFile, "Błąd tworzenia faktury: {$response->body}");
+            // Zawsze loguj błędy API (nie tylko w trybie debug)
+            $errorBody = json_decode($response->body, true);
+            $errorMsg = $errorBody['message'] ?? $errorBody['error'] ?? $response->body;
+            $this->log($logFile, "BŁĄD API Fakturownia ({$response->code}): {$errorMsg}");
 
-            throw new \Exception("Błąd API Fakturownia: {$response->code}");
+            throw new \Exception("Błąd API Fakturownia ({$response->code}): {$errorMsg}");
         } catch (\Exception $e) {
             $this->log($logFile, "Wyjątek API invoice: " . $e->getMessage());
 
