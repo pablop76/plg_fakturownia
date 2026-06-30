@@ -64,6 +64,14 @@
                     description="PLG_HIKASHOP_FAKTUROWNIA_SELLER_TAX_NO_DESC"
                 />
                 <field
+                    name="trigger_status"
+                    type="text"
+                    default="confirmed"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_TRIGGER_STATUS_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_TRIGGER_STATUS_DESC"
+                    size="40"
+                />
+                <field
                     name="invoice_mode"
                     type="list"
                     default="vat"

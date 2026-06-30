@@ -43,6 +43,14 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     private array $processedOrders = [];
 
     /**
+     * Czy tabela blokad została już sprawdzona w tym żądaniu
+     *
+     * @var    boolean
+     * @since  2.0.0
+     */
+    private bool $lockTableReady = false;
+
+    /**
      * Returns an array of events this subscriber will listen to.
      *
      * @return  array
@@ -93,17 +101,21 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
         $this->initLogFile($logFile);
 
+        // Log cyklu życia ZAWSZE (niezależnie od trybu debug) — dzięki temu widać,
+        // czy i w którym miejscu przetwarzanie się zatrzymuje, bez włączania debug.
+        $this->log($logFile, "onAfterOrderUpdate: zamówienie #{$orderId} — start");
+
         $orderFull = $this->getOrderFull($orderId);
 
         if (!$orderFull) {
+            $this->log($logFile, "Zamówienie #{$orderId}: PRZERWANO — getOrderFull() nie zwróciło danych (helper HikaShop niedostępny lub brak zamówienia)");
+
             return;
         }
 
         // Sprawdź czy faktura już istnieje w Fakturownia (zapisz ID faktury w zamówieniu)
         if ($this->invoiceAlreadyExists($orderFull)) {
-            if ($debug) {
-                $this->log($logFile, "Faktura już istnieje dla zamówienia {$orderId}, pomijam");
-            }
+            $this->log($logFile, "Zamówienie #{$orderId}: pominięto — faktura już istnieje (znacznik w order_params)");
 
             return;
         }
@@ -113,19 +125,46 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $this->logOrder($logFile, $orderFull);
         }
 
-        if (empty($orderFull->order_status) || $orderFull->order_status !== 'confirmed') {
-            if ($debug) {
-                $this->log($logFile, "Status nie confirmed, wychodzimy");
-            }
+        $currentStatus = $orderFull->order_status ?? '(brak)';
+
+        // Status(y) wyzwalające wystawienie — konfigurowalne (domyślnie 'confirmed',
+        // bo dopiero wtedy zamówienie jest realnie opłacone). Kilka statusów po przecinku.
+        $triggerStatuses = $this->getTriggerStatuses();
+
+        if (!in_array($currentStatus, $triggerStatuses, true)) {
+            $this->log($logFile, "Zamówienie #{$orderId}: pominięto — status='{$currentStatus}', oczekiwano jednego z: " . implode(', ', $triggerStatuses));
 
             return;
         }
 
-        $billing   = $orderFull->billing_address ?? new \stdClass();
-        $shipping  = $orderFull->shipping_address ?? new \stdClass();
-        $customer  = $orderFull->customer ?? new \stdClass();
+        $this->log($logFile, "Zamówienie #{$orderId}: status '{$currentStatus}' kwalifikuje — przygotowuję wystawienie faktury");
+
+        // HikaShop bywa, że zwraca true/false zamiast obiektu (np. zamówienie bez wysyłki),
+        // a operator ?? łapie tylko null. Metody niżej mają typowane argumenty `object`,
+        // więc twardo normalizujemy do obiektu — inaczej leci TypeError.
+        $billing   = is_object($orderFull->billing_address ?? null) ? $orderFull->billing_address : new \stdClass();
+        $shipping  = is_object($orderFull->shipping_address ?? null) ? $orderFull->shipping_address : new \stdClass();
+        $customer  = is_object($orderFull->customer ?? null) ? $orderFull->customer : new \stdClass();
         $products  = $orderFull->products ?? [];
         $shippings = $orderFull->shippings ?? [];
+
+        // Czyszczenie i walidacja NIP nabywcy. Błędny NIP wywala fakturę (422), a literówka
+        // klienta nie powinna blokować wystawienia. Czyścimy formatowanie (myślniki/spacje/PL),
+        // a jeśli NIP jest faktycznie niepoprawny — usuwamy go (faktura idzie bez NIP).
+        // Sam fakt podania NIP (sygnał B2B) zapamiętujemy PRZED czyszczeniem — wymusza fakturę.
+        $buyerProvidedNip = !empty($billing->address_vat);
+
+        if (!empty($billing->address_vat)) {
+            $rawVat   = (string) $billing->address_vat;
+            $cleanVat = $this->normalizeNip($rawVat);
+
+            if ($cleanVat === '') {
+                $this->log($logFile, "Zamówienie #{$orderId}: NIP nabywcy '{$rawVat}' jest nieprawidłowy — faktura zostanie wystawiona BEZ NIP");
+                $this->notifyAdmin("Fakturownia - nieprawidłowy NIP nabywcy '{$rawVat}', faktura wystawiona bez NIP (zamówienie #{$orderId})", $orderId);
+            }
+
+            $billing->address_vat = $cleanVat;
+        }
 
         // Waluta zamówienia
         $orderCurrencyInfo = $orderFull->order_currency_info ?? new \stdClass();
@@ -139,9 +178,10 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        // Koszt metody płatności
-        $paymentName   = $orderFull->payment->payment_name ?? '';
-        $paymentPrice  = isset($orderFull->payment->payment_price) ? (float) $orderFull->payment->payment_price : 0.0;
+        // Koszt metody płatności (payment też bywa nie-obiektem)
+        $payment       = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
+        $paymentName   = $payment->payment_name ?? '';
+        $paymentPrice  = isset($payment->payment_price) ? (float) $payment->payment_price : 0.0;
         $paymentMethod = $this->mapPaymentMethod($paymentName);
 
         // Data płatności - używamy rzeczywistej daty zamiast 00:00
@@ -171,7 +211,15 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $clientWantsInvoice = $this->checkIfClientWantsInvoice($order, $billing, $customer);
 
         // Logika wyboru typu dokumentu
-        $invoiceKind = $this->determineInvoiceKind($clientWantsInvoice, $invoiceMode, $billing);
+        $invoiceKind = $this->determineInvoiceKind($clientWantsInvoice, $invoiceMode, $billing, $buyerProvidedNip);
+
+        // ATOMOWE ZAKLEPANIE zamówienia — zamyka wyścig dwóch równoległych aktualizacji
+        // (np. zmiana statusu + IPN płatności), który powodował duplikaty faktur.
+        if (!$this->claimOrder($orderId, $logFile)) {
+            $this->log($logFile, "Zamówienie #{$orderId}: pominięto — zaklepane/wystawione przez inny proces (ochrona przed duplikatem)");
+
+            return;
+        }
 
         // Utwórz obiekt klienta HTTP
         $http = HttpFactory::getHttp();
@@ -189,12 +237,35 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             // 2. Buduje pozycje faktury
             $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
 
+            // Strażnik uzgodnienia — porównaj sumę pozycji z kwotą zamówienia.
+            // Ujawnia groszowe rozjazdy zaokrągleń (bug "kwota się nie zgadza") w logu.
+            $sumPositions = 0.0;
+
+            foreach ($positions as $p) {
+                $sumPositions += (float) ($p['total_price_gross'] ?? 0);
+            }
+
+            $orderTotal = (float) ($orderFull->order_full_price ?? 0);
+            $delta      = round($sumPositions - $orderTotal, 2);
+
+            if (abs($delta) >= 0.01) {
+                $this->log($logFile, "Zamówienie #{$orderId}: UWAGA uzgodnienie — suma pozycji "
+                    . number_format($sumPositions, 2) . " ≠ kwota zamówienia "
+                    . number_format($orderTotal, 2) . " (różnica " . number_format($delta, 2) . ")");
+            } elseif ($debug) {
+                $this->log($logFile, "Zamówienie #{$orderId}: uzgodnienie OK (suma pozycji = "
+                    . number_format($sumPositions, 2) . ")");
+            }
+
             // 3. Wysyła fakturę do Fakturowni i pobiera jej ID
             $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $sellerName, $sellerTaxNo, $invoiceKind, $clientId, $currencyCode, $paymentMethod, $logFile, $debug);
 
             if ($invoiceId) {
                 // 4. Zapisujemy ID faktury w zamówieniu (zapobiega duplikatom)
                 $this->saveInvoiceIdToOrder($orderFull, $invoiceId);
+
+                // Trwałe oznaczenie w tabeli blokad — faktura rozliczona
+                $this->markOrderDone($orderId, (int) $invoiceId);
 
                 if ($autoSendEmail) {
                     $this->sendInvoiceByEmail($http, $apiToken, $subdomain, $invoiceId, $logFile, $debug);
@@ -205,14 +276,25 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
                 // 6. Wysyłka produktów do Fakturownia
                 foreach ($products as $product) {
+                    if (!is_object($product)) {
+                        continue;
+                    }
+
                     $this->addOrUpdateProductToFakturownia($http, $apiToken, $subdomain, $product, $logFile, $debug);
                 }
 
-                if ($debug) {
-                    $this->log($logFile, "Zakończono przetwarzanie zamówienia {$orderId}, Invoice ID: {$invoiceId}");
-                }
+                $this->log($logFile, "Zamówienie #{$orderId}: ZAKOŃCZONO — Invoice ID: {$invoiceId}");
+            } else {
+                // Faktura nie powstała — zwolnij blokadę, by kolejna aktualizacja mogła ponowić
+                $this->releaseOrder($orderId);
+                $this->log($logFile, "Zamówienie #{$orderId}: faktura nie powstała — zwolniono blokadę do ponowienia");
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // Łapiemy \Throwable, nie tylko \Exception — TypeError/Error dziedziczą po \Error
+            // i bez tego powodują fatal error, który psuje zapis zamówienia w HikaShop.
+            // Błąd w trakcie — zwolnij blokadę, aby możliwe było ponowienie przy następnej aktualizacji
+            $this->releaseOrder($orderId);
+
             // Zawsze loguj błędy (niezależnie od ustawienia debug)
             $errorMsg = "Fakturownia - błąd zamówienia #{$orderId}: " . $e->getMessage();
             $this->log($logFile, "BŁĄD zamówienia {$orderId}: " . $e->getMessage());
@@ -333,13 +415,18 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                     $this->log($logFile, "Utworzono płatność ID: {$paymentId}, typ: {$paymentMethod}");
                 }
             } else {
-                $this->log($logFile, "Błąd tworzenia płatności: {$response->body}");
+                // Faktura już istnieje, ale płatność się nie zarejestrowała — to musi być widoczne,
+                // bo inaczej dokument zostaje cicho nieopłacony w Fakturowni.
+                $this->log($logFile, "Zamówienie #{$orderFull->order_id}: BŁĄD rejestracji płatności (kod {$response->code}): {$response->body}");
+                $this->notifyAdmin(
+                    "Fakturownia - faktura wystawiona, ale nie udało się zarejestrować płatności (zamówienie #{$orderFull->order_id})",
+                    (int) $orderFull->order_id
+                );
             }
         } catch (\Exception $e) {
-            if ($debug) {
-                $this->log($logFile, "Wyjątek API payments: " . $e->getMessage());
-            }
-            // Nie rzucamy wyjątku - płatność jest drugorzędna
+            // Zawsze loguj (nie tylko w debug) — płatność jest drugorzędna, ale cisza utrudnia diagnozę.
+            // Nie rzucamy dalej: faktura już istnieje, płatność można dopiąć ręcznie.
+            $this->log($logFile, "Zamówienie #{$orderFull->order_id}: wyjątek API płatności: " . $e->getMessage());
         }
     }
 
@@ -415,6 +502,172 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Upewnia się, że istnieje tabela blokad zamówień (idempotentne, raz na żądanie).
+     *
+     * @param   object  $db  Database driver
+     *
+     * @return  void
+     *
+     * @since   2.0.0
+     */
+    private function ensureLockTable(object $db): void
+    {
+        if ($this->lockTableReady) {
+            return;
+        }
+
+        $db->setQuery(
+            'CREATE TABLE IF NOT EXISTS `#__hikashop_fakturownia_invoices` ('
+            . '`order_id` INT(11) NOT NULL,'
+            . '`invoice_id` INT(11) DEFAULT NULL,'
+            . '`state` VARCHAR(16) NOT NULL DEFAULT ' . $db->quote('processing') . ','
+            . '`created` DATETIME DEFAULT NULL,'
+            . '`modified` DATETIME DEFAULT NULL,'
+            . 'PRIMARY KEY (`order_id`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+        $db->execute();
+
+        $this->lockTableReady = true;
+    }
+
+    /**
+     * Atomowo "zaklepuje" zamówienie do wystawienia faktury.
+     *
+     * Klucz główny na order_id sprawia, że tylko jeden równoległy proces przejmie
+     * zamówienie — to zamyka wyścig powodujący duplikaty faktur. Wiersze 'error'
+     * lub zawieszone 'processing' (>5 min) są atomowo wznawiane.
+     *
+     * @param   int     $orderId  ID zamówienia
+     * @param   string  $logFile  Ścieżka pliku logu
+     *
+     * @return  bool  true gdy bieżący proces ma prawo wystawić fakturę
+     *
+     * @since   2.0.0
+     */
+    private function claimOrder(int $orderId, string $logFile): bool
+    {
+        try {
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
+
+            $now = Factory::getDate()->toSql();
+
+            // 1. Atomowa próba wstawienia wiersza (PRIMARY KEY = gwarancja jednokrotności)
+            try {
+                $row = (object) [
+                    'order_id' => $orderId,
+                    'state'    => 'processing',
+                    'created'  => $now,
+                    'modified' => $now,
+                ];
+                $db->insertObject('#__hikashop_fakturownia_invoices', $row);
+
+                return true;
+            } catch (\Exception $insertEx) {
+                // Wiersz już istnieje — analizujemy jego stan poniżej
+            }
+
+            // 2. Wiersz istnieje — sprawdź, czy można (i trzeba) wznowić
+            $query = $db->getQuery(true)
+                ->select($db->quoteName(['state', 'modified']))
+                ->from($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+            $existing = $db->loadObject();
+
+            if (!$existing || $existing->state === 'done') {
+                // Już wystawione (lub nieoczekiwany brak) — nie wystawiamy ponownie
+                return false;
+            }
+
+            // 'processing' świeże = inny proces właśnie wystawia → odpuszczamy.
+            // 'error' lub 'processing' starsze niż 5 min (zawieszony proces) → wznawiamy.
+            $stale = Factory::getDate('-5 minutes')->toSql();
+
+            if ($existing->state === 'error'
+                || ($existing->state === 'processing' && $existing->modified < $stale)) {
+                // Wznowienie atomowe: warunek na poprzednim 'modified' gwarantuje,
+                // że wznowi dokładnie jeden proces.
+                $query = $db->getQuery(true)
+                    ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
+                    ->set($db->quoteName('state') . ' = ' . $db->quote('processing'))
+                    ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
+                    ->where($db->quoteName('order_id') . ' = ' . $orderId)
+                    ->where($db->quoteName('modified') . ' = ' . $db->quote($existing->modified));
+                $db->setQuery($query);
+                $db->execute();
+
+                return $db->getAffectedRows() === 1;
+            }
+
+            return false;
+        } catch (\Exception $e) {
+            // W razie problemu z blokadą NIE wystawiamy — lepiej brak faktury niż duplikat
+            $this->log($logFile, "Błąd zaklepania zamówienia {$orderId}: " . $e->getMessage());
+
+            return false;
+        }
+    }
+
+    /**
+     * Oznacza zamówienie jako rozliczone (faktura wystawiona).
+     *
+     * @param   int  $orderId    ID zamówienia
+     * @param   int  $invoiceId  ID faktury w Fakturowni
+     *
+     * @return  void
+     *
+     * @since   2.0.0
+     */
+    private function markOrderDone(int $orderId, int $invoiceId): void
+    {
+        try {
+            $db  = Factory::getContainer()->get('DatabaseDriver');
+            $now = Factory::getDate()->toSql();
+
+            $query = $db->getQuery(true)
+                ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->set($db->quoteName('invoice_id') . ' = ' . $invoiceId)
+                ->set($db->quoteName('state') . ' = ' . $db->quote('done'))
+                ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+            $db->execute();
+        } catch (\Exception $e) {
+            // Niekrytyczne — fakt wystawienia trzyma też order_params
+        }
+    }
+
+    /**
+     * Zwalnia blokadę zamówienia po nieudanej próbie (umożliwia ponowienie).
+     * Wiersz zostaje ze stanem 'error' jako ślad.
+     *
+     * @param   int  $orderId  ID zamówienia
+     *
+     * @return  void
+     *
+     * @since   2.0.0
+     */
+    private function releaseOrder(int $orderId): void
+    {
+        try {
+            $db  = Factory::getContainer()->get('DatabaseDriver');
+            $now = Factory::getDate()->toSql();
+
+            $query = $db->getQuery(true)
+                ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->set($db->quoteName('state') . ' = ' . $db->quote('error'))
+                ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+            $db->execute();
+        } catch (\Exception $e) {
+            // Ignorujemy — błąd główny jest już zalogowany
+        }
+    }
+
+    /**
      * Sprawdza czy klient chce fakturę
      *
      * @param   object  $order     Order object
@@ -448,14 +701,17 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      * @param   boolean  $clientWantsInvoice  Whether client wants invoice
      * @param   string   $invoiceMode         Invoice mode from settings
      * @param   object   $billing             Billing address
+     * @param   boolean  $buyerProvidedNip    Whether buyer provided a NIP (even if later invalid)
      *
      * @return  string
      *
      * @since   2.0.0
      */
-    private function determineInvoiceKind(bool $clientWantsInvoice, string $invoiceMode, object $billing): string
+    private function determineInvoiceKind(bool $clientWantsInvoice, string $invoiceMode, object $billing, bool $buyerProvidedNip = false): string
     {
-        if ($clientWantsInvoice) {
+        // Klient zaznaczył checkbox LUB podał NIP (sygnał B2B) → faktura, niezależnie od trybu.
+        // Dzięki temu błędny NIP (usunięty przez walidację) nie degraduje faktury do paragonu.
+        if ($clientWantsInvoice || $buyerProvidedNip) {
             return 'vat';
         }
 
@@ -469,6 +725,59 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
         // Auto mode
         return empty($billing->address_vat) ? 'receipt' : 'vat';
+    }
+
+    /**
+     * Zwraca listę statusów zamówienia wyzwalających wystawienie faktury.
+     * Konfigurowalne polem 'trigger_status' (domyślnie 'confirmed').
+     *
+     * @return  array
+     *
+     * @since   2.0.0
+     */
+    private function getTriggerStatuses(): array
+    {
+        $raw      = (string) $this->params->get('trigger_status', 'confirmed');
+        $statuses = array_values(array_filter(array_map('trim', explode(',', $raw))));
+
+        return !empty($statuses) ? $statuses : ['confirmed'];
+    }
+
+    /**
+     * Czyści i waliduje polski NIP (10 cyfr, suma kontrolna).
+     * Usuwa formatowanie (spacje, myślniki, prefiks PL). Zwraca oczyszczony NIP
+     * jeśli poprawny, albo pusty string gdy niepoprawny.
+     *
+     * @param   string  $nip  NIP w dowolnym formacie
+     *
+     * @return  string  Oczyszczony NIP lub '' gdy nieprawidłowy
+     *
+     * @since   2.0.0
+     */
+    private function normalizeNip(string $nip): string
+    {
+        // Zostaw tylko cyfry (usuwa spacje, myślniki, prefiks "PL" itp.)
+        $digits = preg_replace('/\D+/', '', $nip);
+
+        if (strlen($digits) !== 10) {
+            return '';
+        }
+
+        $weights  = [6, 5, 7, 2, 3, 4, 5, 6, 7];
+        $sum      = 0;
+
+        for ($i = 0; $i < 9; $i++) {
+            $sum += $weights[$i] * (int) $digits[$i];
+        }
+
+        $checksum = $sum % 11;
+
+        // Suma kontrolna = 10 jest niedozwolona; musi zgadzać się z 10. cyfrą
+        if ($checksum === 10 || $checksum !== (int) $digits[9]) {
+            return '';
+        }
+
+        return $digits;
     }
 
     /**
@@ -928,8 +1237,9 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $orderDiscountPrice = $orderFull->order_discount_price;
             $orderDiscountTax   = $orderFull->order_discount_tax;
 
-            $vatRate = ($orderDiscountTax / ($orderDiscountPrice - $orderDiscountTax)) * 100;
-            $vatRate = round($vatRate, 2);
+            // Zabezpieczenie przed dzieleniem przez zero (np. rabat 100% lub brak netto)
+            $discountNet = $orderDiscountPrice - $orderDiscountTax;
+            $vatRate     = $discountNet != 0 ? round(($orderDiscountTax / $discountNet) * 100, 2) : 0.0;
 
             $positions[] = [
                 'name'              => 'Kupon rabatowy: ' . $couponCode,
@@ -1027,8 +1337,12 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         if ($debug) {
+            // Maskujemy token w logu — nie zostawiamy sekretu w pliku logu
+            $logPayload                 = $payload;
+            $logPayload['api_token']    = '***';
+
             $this->log($logFile, "Wysyłamy fakturę JSON");
-            $this->log($logFile, "Payload faktury: " . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+            $this->log($logFile, "Payload faktury: " . json_encode($logPayload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
         }
 
         $url = 'https://' . $subdomain . '.fakturownia.pl/invoices.json';
@@ -1056,7 +1370,16 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             // Zawsze loguj błędy API (nie tylko w trybie debug)
             $errorBody = json_decode($response->body, true);
-            $errorMsg = $errorBody['message'] ?? $errorBody['error'] ?? $response->body;
+            $errorMsg  = is_array($errorBody)
+                ? ($errorBody['message'] ?? $errorBody['error'] ?? $errorBody['errors'] ?? $response->body)
+                : $response->body;
+
+            // Fakturownia zwraca błędy walidacji jako tablicę/obiekt (np. {"tax_no":["jest nieprawidłowy"]}).
+            // Bez tego interpolacja tablicy w string dawała "Array to string conversion" i maskowała treść błędu.
+            if (!is_string($errorMsg)) {
+                $errorMsg = json_encode($errorMsg, JSON_UNESCAPED_UNICODE);
+            }
+
             $this->log($logFile, "BŁĄD API Fakturownia ({$response->code}): {$errorMsg}");
 
             throw new \Exception("Błąd API Fakturownia ({$response->code}): {$errorMsg}");
@@ -1105,10 +1428,16 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        // Unikalny code
-        $productCode = !empty($product->order_product_code)
-            ? $product->order_product_code
-            : 'order_' . $product->order_id . '_prod_' . $product->order_product_id;
+        // Stabilny kod produktu — żeby ten sam towar nie tworzył nowego wpisu w katalogu
+        // Fakturowni przy każdym zamówieniu. Priorytet: kod z HikaShop, potem product_id
+        // (stały dla danego produktu), a dopiero w ostateczności kod per-zamówienie.
+        if (!empty($product->order_product_code)) {
+            $productCode = $product->order_product_code;
+        } elseif (!empty($product->product_id)) {
+            $productCode = 'hs_product_' . (int) $product->product_id;
+        } else {
+            $productCode = 'order_' . $product->order_id . '_prod_' . $product->order_product_id;
+        }
 
         $payload = [
             'api_token' => $apiToken,

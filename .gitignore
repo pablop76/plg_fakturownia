@@ -1,0 +1,18 @@
+# Lokalne dane deweloperskie / sekrety — NIGDY nie commitować
+/.dev/
+*.local.json
+*.local.php
+.env
+.env.*
+
+# Lokalna notatka robocza dla Claude — nie publikować
+/CLAUDE.md
+
+# Logi
+*.log
+
+# OS / edytory
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
