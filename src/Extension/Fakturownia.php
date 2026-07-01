@@ -207,8 +207,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Sprawdzamy, czy klient ustawił pole invoice_request
-        $clientWantsInvoice = $this->checkIfClientWantsInvoice($order, $billing, $customer);
+        // Sprawdzamy, czy klient zaznaczył pole invoice_request (pole adresu rozliczeniowego)
+        $clientWantsInvoice = $this->checkIfClientWantsInvoice($orderFull, $billing, $customer);
 
         // Logika wyboru typu dokumentu
         $invoiceKind = $this->determineInvoiceKind($clientWantsInvoice, $invoiceMode, $billing, $buyerProvidedNip);

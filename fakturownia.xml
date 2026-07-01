@@ -78,7 +78,6 @@
                     label="PLG_HIKASHOP_FAKTUROWNIA_INVOICE_MODE_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_INVOICE_MODE_DESC">
                     <option value="vat">PLG_HIKASHOP_FAKTUROWNIA_OPTION_VAT</option>
-                    <option value="receipt">PLG_HIKASHOP_FAKTUROWNIA_OPTION_RECEIPT</option>
                     <option value="auto">PLG_HIKASHOP_FAKTUROWNIA_OPTION_AUTO</option>
                 </field>
                 <field

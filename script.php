@@ -40,8 +40,8 @@ return new class () implements InstallerScriptInterface {
      */
     public function install(InstallerAdapter $adapter): bool
     {
-        $this->createInvoiceRequestField();
-        
+        $this->setupInvoiceRequestField();
+
         Factory::getApplication()->enqueueMessage(
             Text::_('PLG_HIKASHOP_FAKTUROWNIA_INSTALL_SUCCESS'),
             'success'
@@ -59,8 +59,8 @@ return new class () implements InstallerScriptInterface {
      */
     public function update(InstallerAdapter $adapter): bool
     {
-        $this->createInvoiceRequestField();
-        
+        $this->setupInvoiceRequestField();
+
         Factory::getApplication()->enqueueMessage(
             Text::_('PLG_HIKASHOP_FAKTUROWNIA_UPDATE_SUCCESS'),
             'success'
@@ -156,88 +156,39 @@ return new class () implements InstallerScriptInterface {
     }
 
     /**
-     * Tworzy pole invoice_request w HikaShop jeśli nie istnieje
+     * Sprząta nieudaną próbę pola zamówienia i informuje administratora, jak utworzyć
+     * pole „Chcę otrzymać fakturę VAT".
+     *
+     * Pole tworzy się RĘCZNIE w panelu HikaShop (Display → Custom fields). Programowe
+     * tworzenie definicji pola zależy od wewnętrznej struktury tabel HikaShopa (różni się
+     * między wersjami — np. brak kolumny field_name) i okazało się zawodne. HikaShop
+     * tworzy wtedy poprawne, edytowalne pole, a wtyczka odczytuje je automatycznie. Pola
+     * ADRESU celowo nie ruszamy, aby aktualizacja nie skasowała pola utworzonego przez admina.
      *
      * @return  void
      */
-    private function createInvoiceRequestField(): void
+    private function setupInvoiceRequestField(): void
     {
         try {
             $db = Factory::getContainer()->get('DatabaseDriver');
 
-            // Sprawdź czy pole już istnieje
+            // Sprzątnij nieudaną próbę pola ZAMÓWIENIA (Starter go nie pokazuje w checkoucie).
+            // Pola ADRESU celowo NIE ruszamy.
             $query = $db->getQuery(true)
-                ->select('field_id')
-                ->from('#__hikashop_field')
-                ->where('field_namekey = ' . $db->quote('invoice_request'));
+                ->delete($db->quoteName('#__hikashop_field'))
+                ->where($db->quoteName('field_namekey') . ' = ' . $db->quote('invoice_request'))
+                ->where($db->quoteName('field_table') . ' = ' . $db->quote('order'));
             $db->setQuery($query);
-            $existingFieldId = $db->loadResult();
-
-            // Pobierz najwyższy ordering dla pól adresowych
-            $query = $db->getQuery(true)
-                ->select('MAX(field_ordering)')
-                ->from('#__hikashop_field')
-                ->where('field_table = ' . $db->quote('address'));
-            $db->setQuery($query);
-            $maxOrdering = (int) $db->loadResult();
-
-            // 1. Najpierw dodaj kolumnę do tabeli hikashop_address
-            $columnExists = $this->columnExists($db, '#__hikashop_address', 'invoice_request');
-            
-            if (!$columnExists) {
-                $db->setQuery('ALTER TABLE `#__hikashop_address` ADD COLUMN `invoice_request` TINYINT(1) NOT NULL DEFAULT 0');
-                $db->execute();
-            }
-
-            // 2. Teraz utwórz lub zaktualizuj wpis w hikashop_field
-            $field = new \stdClass();
-            $field->field_table           = 'address';
-            $field->field_namekey         = 'invoice_request';
-            $field->field_realname        = 'invoice_request';
-            $field->field_name            = 'Faktura VAT';
-            $field->field_description     = '';
-            $field->field_type            = 'checkbox';
-            $field->field_value           = 'false::Chcę otrzymać fakturę VAT::0';
-            $field->field_published       = 1;
-            $field->field_ordering        = $maxOrdering + 1;
-            $field->field_options         = '';
-            $field->field_default         = '0';
-            $field->field_required        = 0;
-            $field->field_access          = 'all';
-            $field->field_display         = 'billing';
-            $field->field_categories      = 'all';
-            $field->field_with_sub_categories = 0;
-            $field->field_backend         = 1;
-            $field->field_backend_listing = 0;
-            $field->field_frontcomp       = 1;
-            $field->field_core            = 0;
-            $field->field_products        = 'all';
-            $field->field_url             = '';
-            $field->field_class           = '';
-
-            if ($existingFieldId) {
-                // Aktualizuj istniejące pole
-                $field->field_id = $existingFieldId;
-                $db->updateObject('#__hikashop_field', $field, 'field_id');
-            } else {
-                // Utwórz nowe pole
-                $db->insertObject('#__hikashop_field', $field, 'field_id');
-            }
-
-            // 3. Dodaj tłumaczenie do pliku językowego HikaShop
-            $this->addHikashopLanguageKey('INVOICE_REQUEST', 'Faktura VAT', 'VAT Invoice');
-
-            Factory::getApplication()->enqueueMessage(
-                Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_CREATED'),
-                'success'
-            );
-
-        } catch (\Exception $e) {
-            Factory::getApplication()->enqueueMessage(
-                Text::sprintf('PLG_HIKASHOP_FAKTUROWNIA_FIELD_ERROR', $e->getMessage()),
-                'warning'
-            );
+            $db->execute();
+        } catch (\Throwable $e) {
+            // Niekrytyczne — pole i tak tworzy się ręcznie w panelu
         }
+
+        // Instrukcja dla administratora: jak utworzyć pole i skonfigurować checkout.
+        Factory::getApplication()->enqueueMessage(
+            Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_CREATED'),
+            'notice'
+        );
     }
 
     /**
