@@ -113,9 +113,33 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Sprawdź czy faktura już istnieje w Fakturownia (zapisz ID faktury w zamówieniu)
+        $currentStatus = $orderFull->order_status ?? '(brak)';
+
+        // Dane logowania i seller — czytane już tutaj, bo potrzebuje ich zarówno
+        // normalne wystawienie faktury, jak i ewentualna korekta poniżej.
+        $apiToken    = trim($this->params->get('api_token'));
+        $subdomain   = $this->sanitizeSubdomain(trim($this->params->get('subdomain')));
+        $sellerName  = trim($this->params->get('seller_name'));
+        $sellerTaxNo = trim($this->params->get('seller_tax_no'));
+
+        $configErrors = $this->validateConfig($apiToken, $subdomain, $sellerName, $sellerTaxNo);
+        if (!empty($configErrors)) {
+            $errorMsg = "Fakturownia - błąd konfiguracji (zamówienie #{$orderId}): " . implode(', ', $configErrors);
+            $this->log($logFile, "BŁĄD KONFIGURACJI zamówienia {$orderId}: " . implode(', ', $configErrors));
+            $this->notifyAdmin($errorMsg);
+            return;
+        }
+
+        // Zamówienie z JUŻ wystawionym dokumentem, które zmieniło status na anulowany/
+        // zwrócony — inna gałąź niż normalne wystawienie (wymaga korekty, nie nowej faktury).
         if ($this->invoiceAlreadyExists($orderFull)) {
-            $this->log($logFile, "Zamówienie #{$orderId}: pominięto — faktura już istnieje (znacznik w order_params)");
+            $correctionStatuses = $this->getCorrectionStatuses();
+
+            if (!empty($correctionStatuses) && in_array($currentStatus, $correctionStatuses, true)) {
+                $this->handleCorrection($orderFull, $currentStatus, $apiToken, $subdomain, $logFile, $debug);
+            } else {
+                $this->log($logFile, "Zamówienie #{$orderId}: pominięto — faktura już istnieje (tabela blokad)");
+            }
 
             return;
         }
@@ -124,8 +148,6 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         if ($debugOrder) {
             $this->logOrder($logFile, $orderFull);
         }
-
-        $currentStatus = $orderFull->order_status ?? '(brak)';
 
         // Status(y) wyzwalające wystawienie — konfigurowalne (domyślnie 'confirmed',
         // bo dopiero wtedy zamówienie jest realnie opłacone). Kilka statusów po przecinku.
@@ -191,22 +213,9 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $couponCode  = $orderFull->order_discount_code ?? '';
         $couponValue = isset($orderFull->order_discount_price) ? (float) $orderFull->order_discount_price : 0.0;
 
-        $apiToken   = trim($this->params->get('api_token'));
-        $subdomain  = $this->sanitizeSubdomain(trim($this->params->get('subdomain')));
-        $sellerName  = trim($this->params->get('seller_name'));
-        $sellerTaxNo = trim($this->params->get('seller_tax_no'));
         $invoiceMode = $this->params->get('invoice_mode', 'vat');
         $autoSendEmail = $this->params->get('auto_send_email', 0);
         $couponNoteEnabled = (bool) $this->params->get('coupon_note', 1);
-
-        // Walidacja konfiguracji - loguj błędy konfiguracji
-        $configErrors = $this->validateConfig($apiToken, $subdomain, $sellerName, $sellerTaxNo);
-        if (!empty($configErrors)) {
-            $errorMsg = "Fakturownia - błąd konfiguracji (zamówienie #{$orderId}): " . implode(', ', $configErrors);
-            $this->log($logFile, "BŁĄD KONFIGURACJI zamówienia {$orderId}: " . implode(', ', $configErrors));
-            $this->notifyAdmin($errorMsg);
-            return;
-        }
 
         // Sprawdzamy, czy klient zaznaczył pole invoice_request (pole adresu rozliczeniowego)
         $clientWantsInvoice = $this->checkIfClientWantsInvoice($orderFull, $billing, $customer);
@@ -270,10 +279,9 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $sellerName, $sellerTaxNo, $invoiceKind, $clientId, $currencyCode, $paymentMethod, $logFile, $debug, $couponNoteText);
 
             if ($invoiceId) {
-                // 4. Zapisujemy ID faktury w zamówieniu (zapobiega duplikatom)
-                $this->saveInvoiceIdToOrder($orderFull, $invoiceId);
-
-                // Trwałe oznaczenie w tabeli blokad — faktura rozliczona
+                // 4. Trwałe oznaczenie w tabeli blokad — faktura rozliczona (zapobiega
+                // duplikatom; invoice_id zapisany tu jest jedynym źródłem prawdy, patrz
+                // invoiceAlreadyExists()/getExistingInvoiceId())
                 $this->markOrderDone($orderId, (int) $invoiceId);
 
                 if ($autoSendEmail) {
@@ -440,7 +448,17 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Sprawdza czy faktura lub paragon już zostały utworzone dla tego zamówienia
+     * Sprawdza czy faktura lub paragon już zostały utworzone dla tego zamówienia.
+     * Źródłem prawdy jest tabela blokad (#__hikashop_fakturownia_invoices) — NIE
+     * order_params. HikaShop 5.1.2 nie ma natywnej kolumny order_params (potwierdzone:
+     * brak w schemacie SQL core i brak jakiegokolwiek odwołania w kodzie PHP core),
+     * więc zapisy do niej przez poprzednią wersję tej metody cicho failowały (wyjątek
+     * łapany przez try/catch, logowany tylko do PHP error_log — nigdy do naszego
+     * pliku logu). invoiceAlreadyExists() zawsze zwracało false. Duplikaty faktur
+     * i tak były blokowane przez claimOrder()/tabelę blokad (osobny, działający
+     * mechanizm), więc bug był niewidoczny — do czasu aż funkcja korekty zaczęła
+     * zależeć WYŁĄCZNIE od tego sprawdzenia (log: zamówienie z już utworzoną fakturą
+     * mimo to leciało starą ścieżką "status nie pasuje do trigger_status").
      *
      * @param   object  $orderFull  Full order object
      *
@@ -450,63 +468,34 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      */
     private function invoiceAlreadyExists(object $orderFull): bool
     {
-        if (isset($orderFull->order_params) && !empty($orderFull->order_params)) {
-            $params = is_string($orderFull->order_params)
-                ? json_decode($orderFull->order_params, true)
-                : (array) $orderFull->order_params;
-
-            if (!empty($params['fakturownia_document_id'])) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->getExistingInvoiceId((int) $orderFull->order_id) !== null;
     }
 
     /**
-     * Zapisuje ID faktury w parametrach zamówienia
+     * Odczytuje ID już wystawionej faktury/paragonu dla zamówienia z tabeli blokad.
      *
-     * @param   object  $orderFull  Full order object
-     * @param   int     $invoiceId  Invoice ID from Fakturownia
+     * @param   int  $orderId  ID zamówienia
      *
-     * @return  void
+     * @return  int|null
      *
-     * @since   2.0.0
+     * @since   2.1.0
      */
-    private function saveInvoiceIdToOrder(object $orderFull, int $invoiceId): void
+    private function getExistingInvoiceId(int $orderId): ?int
     {
         try {
-            $db      = Factory::getContainer()->get('DatabaseDriver');
-            $orderId = (int) $orderFull->order_id;
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
 
-            // Pobierz aktualne parametry
             $query = $db->getQuery(true)
-                ->select('order_params')
-                ->from('#__hikashop_order')
-                ->where('order_id = ' . $orderId);
+                ->select($db->quoteName('invoice_id'))
+                ->from($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
             $db->setQuery($query);
-            $currentParams = $db->loadResult();
+            $invoiceId = $db->loadResult();
 
-            $params = [];
-
-            if (!empty($currentParams)) {
-                $params = json_decode($currentParams, true) ?: [];
-            }
-
-            // Dodaj ID faktury lub paragonu
-            $params['fakturownia_document_id'] = $invoiceId;
-            $params['fakturownia_processed']   = date('Y-m-d H:i:s');
-
-            // Zapisz z powrotem
-            $query = $db->getQuery(true)
-                ->update('#__hikashop_order')
-                ->set('order_params = ' . $db->quote(json_encode($params)))
-                ->where('order_id = ' . $orderId);
-            $db->setQuery($query);
-            $db->execute();
+            return ($invoiceId !== null && $invoiceId !== '') ? (int) $invoiceId : null;
         } catch (\Exception $e) {
-            // Log error but don't break the process
-            error_log('Błąd zapisywania ID faktury: ' . $e->getMessage());
+            return null;
         }
     }
 
@@ -620,6 +609,44 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Ustawia stan wiersza blokady zamówienia (i opcjonalnie invoice_id).
+     * Wspólny helper dla wszystkich "końcowych"/przejściowych stanów: done, error,
+     * notified, corrected, correction_error.
+     *
+     * @param   int       $orderId    ID zamówienia
+     * @param   string    $state      Nowy stan
+     * @param   int|null  $invoiceId  ID faktury do zapisania w kolumnie invoice_id (opcjonalnie)
+     *
+     * @return  void
+     *
+     * @since   2.1.0
+     */
+    private function setLockState(int $orderId, string $state, ?int $invoiceId = null): void
+    {
+        try {
+            $db  = Factory::getContainer()->get('DatabaseDriver');
+            $now = Factory::getDate()->toSql();
+
+            $query = $db->getQuery(true)
+                ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->set($db->quoteName('state') . ' = ' . $db->quote($state))
+                ->set($db->quoteName('modified') . ' = ' . $db->quote($now));
+
+            if ($invoiceId !== null) {
+                $query->set($db->quoteName('invoice_id') . ' = ' . $invoiceId);
+            }
+
+            $query->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+            $db->execute();
+        } catch (\Exception $e) {
+            // Rzadka awaria DB — tabela blokad to jedyne źródło prawdy o stanie
+            // zamówienia (patrz invoiceAlreadyExists()), ale to ta sama prosta
+            // operacja UPDATE co w reszcie tabeli blokad, więc nie wymaga retry.
+        }
+    }
+
+    /**
      * Oznacza zamówienie jako rozliczone (faktura wystawiona).
      *
      * @param   int  $orderId    ID zamówienia
@@ -631,21 +658,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      */
     private function markOrderDone(int $orderId, int $invoiceId): void
     {
-        try {
-            $db  = Factory::getContainer()->get('DatabaseDriver');
-            $now = Factory::getDate()->toSql();
-
-            $query = $db->getQuery(true)
-                ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
-                ->set($db->quoteName('invoice_id') . ' = ' . $invoiceId)
-                ->set($db->quoteName('state') . ' = ' . $db->quote('done'))
-                ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
-                ->where($db->quoteName('order_id') . ' = ' . $orderId);
-            $db->setQuery($query);
-            $db->execute();
-        } catch (\Exception $e) {
-            // Niekrytyczne — fakt wystawienia trzyma też order_params
-        }
+        $this->setLockState($orderId, 'done', $invoiceId);
     }
 
     /**
@@ -660,19 +673,49 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      */
     private function releaseOrder(int $orderId): void
     {
+        $this->setLockState($orderId, 'error');
+    }
+
+    /**
+     * Atomowo "zaklepuje" zamówienie z już wystawionym dokumentem do korekty
+     * (anulowanie/zwrot). Przejście możliwe TYLKO ze stanu 'done' — to zamyka
+     * wyścig (dwa równoległe wywołania nie skorygują tego samego zamówienia
+     * dwukrotnie) i jednocześnie naturalnie blokuje ponowne powiadamianie admina
+     * o zamówieniu, które już zostało obsłużone (stan 'done' nie wróci samoistnie).
+     *
+     * W odróżnieniu od claimOrder() nie ma tu logiki wznawiania zawieszonych prób —
+     * to rzadka ścieżka (anulowanie), a admin i tak zawsze dostaje powiadomienie
+     * niezależnie od tego, czy automatyczna korekta się powiedzie.
+     *
+     * @param   int     $orderId  ID zamówienia
+     * @param   string  $logFile  Ścieżka pliku logu
+     *
+     * @return  bool  true gdy bieżący proces ma prawo obsłużyć korektę
+     *
+     * @since   2.1.0
+     */
+    private function claimCorrection(int $orderId, string $logFile): bool
+    {
         try {
-            $db  = Factory::getContainer()->get('DatabaseDriver');
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
+
             $now = Factory::getDate()->toSql();
 
             $query = $db->getQuery(true)
                 ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
-                ->set($db->quoteName('state') . ' = ' . $db->quote('error'))
+                ->set($db->quoteName('state') . ' = ' . $db->quote('correcting'))
                 ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
-                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+                ->where($db->quoteName('order_id') . ' = ' . $orderId)
+                ->where($db->quoteName('state') . ' = ' . $db->quote('done'));
             $db->setQuery($query);
             $db->execute();
+
+            return $db->getAffectedRows() === 1;
         } catch (\Exception $e) {
-            // Ignorujemy — błąd główny jest już zalogowany
+            $this->log($logFile, "Błąd zaklepania korekty zamówienia {$orderId}: " . $e->getMessage());
+
+            return false;
         }
     }
 
@@ -750,6 +793,24 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $statuses = array_values(array_filter(array_map('trim', explode(',', $raw))));
 
         return !empty($statuses) ? $statuses : ['confirmed'];
+    }
+
+    /**
+     * Zwraca listę statusów zamówienia traktowanych jako anulowanie/zwrot PO wystawieniu
+     * dokumentu (wymagających korekty). Konfigurowalne polem 'correction_status'
+     * (domyślnie 'cancelled,refunded' — to też domyślne statusy HikaShop rdzenia,
+     * patrz install.hikashop.php: cancelled_order_status). Pusta wartość = funkcja
+     * wyłączona (admin może celowo wyczyścić pole, jeśli nie pasuje do jego statusów).
+     *
+     * @return  array
+     *
+     * @since   2.1.0
+     */
+    private function getCorrectionStatuses(): array
+    {
+        $raw = (string) $this->params->get('correction_status', 'cancelled,refunded');
+
+        return array_values(array_filter(array_map('trim', explode(',', $raw))));
     }
 
     /**
@@ -1412,6 +1473,236 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             throw new \Exception('Błąd tworzenia faktury: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Obsługuje zamówienie, które ma już wystawiony dokument w Fakturowni, a zmieniło
+     * status na anulowany/zwrócony (getCorrectionStatuses). ZAWSZE powiadamia admina —
+     * niezależnie od ustawienia auto_correction — bo faktura/paragon wymaga korekty,
+     * a wtyczka może tego nie zrobić automatycznie. Obsługuje TYLKO pełne anulowanie/
+     * zwrot całego zamówienia (bez obsługi zwrotów częściowych — jak w oficjalnej
+     * wtyczce Fakturownia dla WooCommerce).
+     *
+     * @param   object  $orderFull      Full order object
+     * @param   string  $currentStatus  Aktualny status zamówienia
+     * @param   string  $apiToken       API token
+     * @param   string  $subdomain      Subdomain
+     * @param   string  $logFile        Log file path
+     * @param   int     $debug          Debug mode flag
+     *
+     * @return  void
+     *
+     * @since   2.1.0
+     */
+    private function handleCorrection(
+        object $orderFull,
+        string $currentStatus,
+        string $apiToken,
+        string $subdomain,
+        string $logFile,
+        int $debug
+    ): void {
+        $orderId = (int) $orderFull->order_id;
+
+        // Atomowe zaklepanie (done -> correcting) — zamyka wyścig I jednocześnie
+        // naturalnie blokuje powtórne powiadamianie o już obsłużonym zamówieniu.
+        if (!$this->claimCorrection($orderId, $logFile)) {
+            if ($debug) {
+                $this->log($logFile, "Zamówienie #{$orderId}: korekta pominięta — już obsłużona lub w trakcie");
+            }
+
+            return;
+        }
+
+        $existingInvoiceId = $this->getExistingInvoiceId($orderId) ?? 0;
+        $autoCorrection    = (bool) $this->params->get('auto_correction', 0);
+
+        $this->log($logFile, "Zamówienie #{$orderId}: status zmienił się na '{$currentStatus}', a dokument (ID {$existingInvoiceId}) już istnieje w Fakturowni — wymaga korekty");
+        $this->notifyAdmin(
+            "Fakturownia - zamówienie #{$orderId} zmieniło status na '{$currentStatus}', ale ma już wystawiony dokument (ID {$existingInvoiceId}) w Fakturowni. "
+                . ($autoCorrection ? 'Trwa automatyczne wystawianie korekty...' : 'Wystaw korektę ręcznie w Fakturowni.'),
+            $orderId
+        );
+
+        if (!$autoCorrection) {
+            $this->setLockState($orderId, 'notified');
+
+            return;
+        }
+
+        try {
+            $billing   = is_object($orderFull->billing_address ?? null) ? $orderFull->billing_address : new \stdClass();
+            $customer  = is_object($orderFull->customer ?? null) ? $orderFull->customer : new \stdClass();
+            $products  = $orderFull->products ?? [];
+            $shippings = $orderFull->shippings ?? [];
+            $payment   = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
+
+            $paymentName  = $payment->payment_name ?? '';
+            $paymentPrice = isset($payment->payment_price) ? (float) $payment->payment_price : 0.0;
+            $couponCode   = $orderFull->order_discount_code ?? '';
+            $couponValue  = isset($orderFull->order_discount_price) ? (float) $orderFull->order_discount_price : 0.0;
+            $userEmail    = $customer->user_email ?? 'Brak danych';
+
+            $http     = HttpFactory::getHttp();
+            $clientId = $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
+
+            if (!$clientId) {
+                throw new \Exception('Nie udało się utworzyć/znaleźć klienta w Fakturowni (korekta)');
+            }
+
+            // Odtwarzamy oryginalne pozycje tą samą funkcją co przy wystawianiu faktury —
+            // gwarantuje to identyczne kwoty/VAT/rabaty jak na korygowanym dokumencie.
+            $originalPositions   = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
+            $correctionPositions = $this->buildCorrectionPositions($originalPositions);
+
+            if (empty($correctionPositions)) {
+                $this->log($logFile, "Zamówienie #{$orderId}: korekta pominięta — brak pozycji do skorygowania");
+                $this->setLockState($orderId, 'notified');
+
+                return;
+            }
+
+            $correctionId = $this->sendCorrectionInvoice($http, $apiToken, $subdomain, $existingInvoiceId, $clientId, $correctionPositions, $currentStatus, $orderId, $logFile, $debug);
+
+            if (!$correctionId) {
+                throw new \Exception('Fakturownia nie zwróciła ID korekty mimo odpowiedzi bez błędu');
+            }
+
+            $this->setLockState($orderId, 'corrected');
+            $this->log($logFile, "Zamówienie #{$orderId}: korekta wystawiona automatycznie (ID {$correctionId})");
+            $this->notifyAdmin("Fakturownia - korekta wystawiona automatycznie dla zamówienia #{$orderId} (ID {$correctionId})", $orderId);
+        } catch (\Throwable $e) {
+            $this->setLockState($orderId, 'correction_error');
+            $this->log($logFile, "Zamówienie #{$orderId}: BŁĄD automatycznej korekty: " . $e->getMessage());
+            $this->notifyAdmin("Fakturownia - nie udało się automatycznie wystawić korekty dla zamówienia #{$orderId}: " . $e->getMessage(), $orderId);
+        }
+    }
+
+    /**
+     * Przekształca oryginalne pozycje faktury w pozycje korekty do zera (pełny zwrot/
+     * anulowanie) — format zgodny z API Fakturowni: ujemna delta na poziomie głównym
+     * plus correction_before_attributes (stan przed) i correction_after_attributes
+     * (stan po, zerowy). Pozycje o zerowej wartości (po odjęciu discount) są pomijane.
+     *
+     * @param   array  $originalPositions  Pozycje zwrócone przez buildPositions()
+     *
+     * @return  array
+     *
+     * @since   2.1.0
+     */
+    private function buildCorrectionPositions(array $originalPositions): array
+    {
+        $correctionPositions = [];
+
+        foreach ($originalPositions as $pos) {
+            $beforeGross = round((float) $pos['total_price_gross'] - (float) ($pos['discount'] ?? 0), 2);
+
+            if ($beforeGross <= 0) {
+                continue;
+            }
+
+            $correctionPositions[] = [
+                'name'              => $pos['name'],
+                'quantity'          => -$pos['quantity'],
+                'total_price_gross' => -$beforeGross,
+                'tax'               => $pos['tax'],
+                'kind'              => 'correction',
+                'correction_before_attributes' => [
+                    'name'              => $pos['name'],
+                    'quantity'          => $pos['quantity'],
+                    'total_price_gross' => $beforeGross,
+                    'tax'               => $pos['tax'],
+                    'kind'              => 'correction_before',
+                ],
+                'correction_after_attributes' => [
+                    'name'              => $pos['name'],
+                    'quantity'          => 0,
+                    'total_price_gross' => 0,
+                    'tax'               => $pos['tax'],
+                    'kind'              => 'correction_after',
+                ],
+            ];
+        }
+
+        return $correctionPositions;
+    }
+
+    /**
+     * Wysyła fakturę korygującą (do zera) do Fakturowni przez API.
+     *
+     * @param   object  $http               HTTP client
+     * @param   string  $apiToken           API token
+     * @param   string  $subdomain          Subdomain
+     * @param   int     $originalInvoiceId  ID korygowanego dokumentu
+     * @param   int     $clientId           Client ID w Fakturowni
+     * @param   array   $positions          Pozycje korekty (buildCorrectionPositions)
+     * @param   string  $currentStatus      Aktualny status zamówienia (do uzasadnienia korekty)
+     * @param   int     $orderId            ID zamówienia
+     * @param   string  $logFile            Log file path
+     * @param   int     $debug              Debug mode flag
+     *
+     * @return  int|null
+     *
+     * @since   2.1.0
+     */
+    private function sendCorrectionInvoice(
+        object $http,
+        string $apiToken,
+        string $subdomain,
+        int $originalInvoiceId,
+        int $clientId,
+        array $positions,
+        string $currentStatus,
+        int $orderId,
+        string $logFile,
+        int $debug
+    ): ?int {
+        $payload = [
+            'api_token' => $apiToken,
+            'invoice'   => [
+                'kind'              => 'correction',
+                'from_invoice_id'   => $originalInvoiceId,
+                'correction_reason' => "Zamówienie #{$orderId} — status zmieniony na '{$currentStatus}'",
+                'client_id'         => $clientId,
+                'positions'         => $positions,
+            ],
+        ];
+
+        if ($debug) {
+            $logPayload              = $payload;
+            $logPayload['api_token'] = '***';
+            $this->log($logFile, "Wysyłamy korektę JSON: " . json_encode($logPayload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+        }
+
+        $url = 'https://' . $subdomain . '.fakturownia.pl/invoices.json';
+
+        $response = $http->post($url, json_encode($payload), [
+            'Content-Type' => 'application/json',
+            'Accept'       => 'application/json',
+        ]);
+
+        if ($debug) {
+            $this->log($logFile, "Odpowiedź API korekty: {$response->code}");
+        }
+
+        if (in_array($response->code, [200, 201])) {
+            $data = json_decode($response->body, true);
+
+            return $data['id'] ?? null;
+        }
+
+        $errorBody = json_decode($response->body, true);
+        $errorMsg  = is_array($errorBody)
+            ? ($errorBody['message'] ?? $errorBody['error'] ?? $errorBody['errors'] ?? $response->body)
+            : $response->body;
+
+        if (!is_string($errorMsg)) {
+            $errorMsg = json_encode($errorMsg, JSON_UNESCAPED_UNICODE);
+        }
+
+        $this->log($logFile, "BŁĄD API korekty ({$response->code}): {$errorMsg}");
+
+        throw new \Exception("Błąd API Fakturownia korekta ({$response->code}): {$errorMsg}");
     }
 
     /**

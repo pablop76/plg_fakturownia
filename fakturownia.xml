@@ -100,6 +100,26 @@
                 </field>
             </fieldset>
 
+            <fieldset name="correction" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_CORRECTION">
+                <field
+                    name="correction_status"
+                    type="text"
+                    default="cancelled,refunded"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_CORRECTION_STATUS_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_CORRECTION_STATUS_DESC"
+                    size="40"
+                />
+                <field
+                    name="auto_correction"
+                    type="radio"
+                    default="0"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_AUTO_CORRECTION_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_AUTO_CORRECTION_DESC">
+                    <option value="1">Tak</option>
+                    <option value="0">Nie</option>
+                </field>
+            </fieldset>
+
             <fieldset name="debug" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_DEBUG">
                 <field
                     name="debug_order"

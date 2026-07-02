@@ -16,6 +16,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 - **Konfigurowalny status zamówienia** wyzwalający wystawienie (domyślnie „confirmed").
 - **Ochrona przed duplikatami** — to samo zamówienie nie wystawi dwóch faktur.
 - Opcjonalne automatyczne wysyłanie faktury e-mailem do klienta.
+- **Powiadomienie o konieczności korekty** przy anulowaniu/zwrocie zamówienia po wystawieniu dokumentu, z opcją automatycznego wystawienia korekty do zera.
 
 ---
 
@@ -101,6 +102,17 @@ Kupon rabatowy (`order_discount_code`/`order_discount_price` z HikaShop) **nie j
 > Jeśli mimo to rabat na dokumencie wygląda źle, sprawdź: **Ustawienia → Ustawienia konta → Konfiguracja → Sposoby wyliczania → „Jak obliczać rabat"** — wtyczka wysyła `discount_kind: "amount"` (rabat kwotowy) per dokument, co powinno nadpisać ustawienie konta, ale w razie wątpliwości ustaw tam też „kwotowo".
 
 Kod i kwota kuponu (np. „Kupon rabatowy: Kupon1 (-1,00 PLN)" — w walucie zamówienia) można dodatkowo dopisać w polu **„Uwagi"** dokumentu (nie jako pozycja — bezpieczne dla druku fiskalnego) — steruje tym ustawienie wtyczki **„Dopisz kupon w uwagach dokumentu"** (włączone domyślnie, można wyłączyć).
+
+---
+
+## Anulowanie i zwrot zamówienia (korekta)
+
+Gdy zamówienie, które **ma już wystawiony dokument** w Fakturowni, zmieni status na anulowany/zwrócony (domyślnie statusy `cancelled` i `refunded` — to też domyślne statusy rdzenia HikaShop), wtyczka **zawsze** dopisze wpis w historii zamówienia informujący, że dokument wymaga korekty — niezależnie od ustawień poniżej.
+
+- **Status(y) anulowania/zwrotu** — pole tekstowe (domyślnie `cancelled,refunded`), kilka statusów po przecinku. Wyczyszczenie pola wyłącza całą funkcję.
+- **Automatyczna korekta** (domyślnie **wyłączona**) — gdy włączona, wtyczka sama wystawi w Fakturowni fakturę korygującą **do zera** (pełny zwrot/anulowanie całości — bez obsługi zwrotów częściowych, tak jak oficjalna wtyczka Fakturownia dla WooCommerce). Bez tego ustawienia korektę trzeba wystawić ręcznie w Fakturowni po otrzymaniu powiadomienia.
+
+> To tworzy prawdziwy dokument księgowy — zanim włączysz automatyczną korektę, przetestuj pełny cykl (zamówienie → faktura → anulowanie → korekta) na koncie testowym Fakturowni.
 
 ---
 
