@@ -197,6 +197,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $sellerTaxNo = trim($this->params->get('seller_tax_no'));
         $invoiceMode = $this->params->get('invoice_mode', 'vat');
         $autoSendEmail = $this->params->get('auto_send_email', 0);
+        $couponNoteEnabled = (bool) $this->params->get('coupon_note', 1);
 
         // Walidacja konfiguracji - loguj błędy konfiguracji
         $configErrors = $this->validateConfig($apiToken, $subdomain, $sellerName, $sellerTaxNo);
@@ -237,12 +238,19 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             // 2. Buduje pozycje faktury
             $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
 
+            // Kod kuponu nie jest już osobną pozycją (patrz buildPositions) — opcjonalnie
+            // dopisujemy go do pola 'Uwagi' dokumentu, żeby nie znikła informacja, który
+            // kupon został użyty. Wyłączalne w ustawieniach wtyczki (coupon_note).
+            $couponNoteText = ($couponNoteEnabled && !empty($couponCode) && $couponValue > 0)
+                ? 'Kupon rabatowy: ' . $couponCode
+                : '';
+
             // Strażnik uzgodnienia — porównaj sumę pozycji z kwotą zamówienia.
             // Ujawnia groszowe rozjazdy zaokrągleń (bug "kwota się nie zgadza") w logu.
             $sumPositions = 0.0;
 
             foreach ($positions as $p) {
-                $sumPositions += (float) ($p['total_price_gross'] ?? 0);
+                $sumPositions += (float) ($p['total_price_gross'] ?? 0) - (float) ($p['discount'] ?? 0);
             }
 
             $orderTotal = (float) ($orderFull->order_full_price ?? 0);
@@ -258,7 +266,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
 
             // 3. Wysyła fakturę do Fakturowni i pobiera jej ID
-            $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $sellerName, $sellerTaxNo, $invoiceKind, $clientId, $currencyCode, $paymentMethod, $logFile, $debug);
+            $invoiceId = $this->sendInvoice($orderFull, $http, $apiToken, $subdomain, $billing, $positions, $sellerName, $sellerTaxNo, $invoiceKind, $clientId, $currencyCode, $paymentMethod, $logFile, $debug, $couponNoteText);
 
             if ($invoiceId) {
                 // 4. Zapisujemy ID faktury w zamówieniu (zapobiega duplikatom)
@@ -1219,22 +1227,40 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             ];
         }
 
-        // Dodaj pozycję kuponu rabatowego
-        if (!empty($couponCode) && $couponValue > 0) {
-            // Obliczenie stawki VAT dla rabatu kwota rabatu i kwota podatku rabatu
-            $orderDiscountPrice = $orderFull->order_discount_price;
-            $orderDiscountTax   = $orderFull->order_discount_tax;
+        // Kupon rabatowy — NIE jako osobna pozycja z ujemną ceną. Fakturownia nie obsługuje
+        // rabatu jako oddzielnej pozycji dokumentu, a kasy/drukarki fiskalne (moduł paragony.pl)
+        // odrzucają pozycje z ujemną ceną błędem "Niepoprawna cena (cena musi być dodatnia)" —
+        // to wymóg protokołu fiskalnego: rabat to osobny typ operacji, a nie sprzedaż towaru za
+        // ujemną kwotę. Zgodnie z API Fakturowni rabat trzeba rozłożyć jako pole 'discount'
+        // (kwotowo) na już istniejących pozycjach — Fakturownia sama odejmuje tę kwotę od
+        // total_price_gross przy wyliczaniu dokumentu. Rozkładamy proporcjonalnie do wartości
+        // każdej pozycji (poprawne też pod względem VAT przy mieszanych stawkach), a resztę
+        // zaokrąglenia dokłada ostatnia pozycja, żeby suma rabatów zgadzała się co do grosza.
+        // sendInvoice() wykrywa pole 'discount' na pozycjach i sam ustawia show_discount/discount_kind.
+        if (!empty($couponCode) && $couponValue > 0 && !empty($positions)) {
+            $grandTotal = array_sum(array_column($positions, 'total_price_gross'));
 
-            // Zabezpieczenie przed dzieleniem przez zero (np. rabat 100% lub brak netto)
-            $discountNet = $orderDiscountPrice - $orderDiscountTax;
-            $vatRate     = $discountNet != 0 ? round(($orderDiscountTax / $discountNet) * 100, 2) : 0.0;
+            if ($grandTotal > 0) {
+                // Kupon nie powinien przewyższać wartości zamówienia — zabezpieczenie przed
+                // rabatem większym niż pozycja (co znów dałoby ujemną wartość po odjęciu).
+                $couponToDistribute = min($couponValue, $grandTotal);
+                $remaining          = round($couponToDistribute, 2);
+                $lastIndex          = array_key_last($positions);
 
-            $positions[] = [
-                'name'              => 'Kupon rabatowy: ' . $couponCode,
-                'quantity'          => 1,
-                'tax'               => $vatRate,
-                'total_price_gross' => round(-1 * $couponValue, 2),
-            ];
+                foreach ($positions as $i => &$pos) {
+                    if ($i === $lastIndex) {
+                        $share = $remaining;
+                    } else {
+                        $share = round($couponToDistribute * ($pos['total_price_gross'] / $grandTotal), 2);
+                        $remaining -= $share;
+                    }
+
+                    if ($share > 0) {
+                        $pos['discount'] = min($share, $pos['total_price_gross']);
+                    }
+                }
+                unset($pos);
+            }
         }
 
         return $positions;
@@ -1257,6 +1283,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      * @param   string  $paymentMethod Payment method (transfer, cash, card, etc.)
      * @param   string  $logFile       Log file path
      * @param   int     $debug         Debug mode flag
+     * @param   string  $couponNote    Treść do pola 'Uwagi' dokumentu (puste = brak), np. info o kuponie
      *
      * @return  int|null
      *
@@ -1276,7 +1303,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         string $currencyCode,
         string $paymentMethod,
         string $logFile,
-        int $debug
+        int $debug,
+        string $couponNote = ''
     ): ?int {
         // Sprawdź czy w pozycji jest chociaż jeden rabat
         $showDiscount = false;
@@ -1322,6 +1350,13 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
         if ($showDiscount && $discountKind) {
             $payload['invoice']['discount_kind'] = $discountKind;
+        }
+
+        // Notatka o kuponie w polu 'Uwagi' dokumentu (nie pozycja — bezpieczne dla druku
+        // fiskalnego, drukarka fiskalna drukuje tylko strukturalne dane pozycji/płatności,
+        // nie dowolny tekst notatki). Wyłączalne w ustawieniach wtyczki (coupon_note).
+        if ($couponNote !== '') {
+            $payload['invoice']['description'] = $couponNote;
         }
 
         if ($debug) {

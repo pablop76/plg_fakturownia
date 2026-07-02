@@ -94,6 +94,16 @@ W trybie **Faktura VAT** każde zamówienie otrzymuje fakturę, niezależnie od 
 
 ---
 
+## Rabaty i kupony na paragonie fiskalnym
+
+Kupon rabatowy (`order_discount_code`/`order_discount_price` z HikaShop) **nie jest** wysyłany jako osobna pozycja z ujemną ceną. Kasy/drukarki fiskalne (moduł paragony.pl) odrzucają taką pozycję błędem *„Niepoprawna cena (cena musi być dodatnia)"* — to wymóg protokołu fiskalnego: rabat to osobny typ operacji, nie sprzedaż towaru za ujemną kwotę. Zgodnie z [API Fakturowni](https://pomoc.fakturownia.pl/374462-api-dodawanie-faktur-z-rabatem-kwotowym-lub-procentowym) wtyczka rozkłada wartość kuponu **proporcjonalnie jako pole `discount` na już istniejących pozycjach** (produkty, wysyłka, koszt płatności) — Fakturownia sama odejmuje tę kwotę od wartości brutto pozycji przy wyliczaniu dokumentu. Suma rabatów zawsze zgadza się co do grosza z wartością kuponu (reszta zaokrąglenia trafia do ostatniej pozycji).
+
+> Jeśli mimo to rabat na dokumencie wygląda źle, sprawdź: **Ustawienia → Ustawienia konta → Konfiguracja → Sposoby wyliczania → „Jak obliczać rabat"** — wtyczka wysyła `discount_kind: "amount"` (rabat kwotowy) per dokument, co powinno nadpisać ustawienie konta, ale w razie wątpliwości ustaw tam też „kwotowo".
+
+Kod kuponu (np. „Kupon1") można dodatkowo dopisać w polu **„Uwagi"** dokumentu (nie jako pozycja — bezpieczne dla druku fiskalnego) — steruje tym ustawienie wtyczki **„Dopisz kupon w uwagach dokumentu"** (włączone domyślnie, można wyłączyć).
+
+---
+
 ## Debugowanie
 W ustawieniach wtyczki można włączyć:
 - **Logowanie zamówień** — zapisuje pełne dane zamówienia do logu,

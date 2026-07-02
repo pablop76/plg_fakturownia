@@ -89,6 +89,15 @@
                     <option value="1">Tak</option>
                     <option value="0">Nie</option>
                 </field>
+                <field
+                    name="coupon_note"
+                    type="radio"
+                    default="1"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_COUPON_NOTE_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_COUPON_NOTE_DESC">
+                    <option value="1">Tak</option>
+                    <option value="0">Nie</option>
+                </field>
             </fieldset>
 
             <fieldset name="debug" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_DEBUG">
