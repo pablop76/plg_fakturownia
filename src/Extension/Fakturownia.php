@@ -1103,7 +1103,12 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
 
             $qty      = (float) $product->order_product_quantity;
-            $priceNet = (float) $product->order_product_price_before_discount;
+            // order_product_price to cena PO rabacie wyświetlania (naliczonym już w sklepie,
+            // zanim produkt trafił do koszyka) — order_product_price_before_discount to cena
+            // SPRZED rabatu i użycie jej zawyżało fakturę o wartość rabatu (potwierdzone na
+            // zamówieniach z polem order_product_discount_info: różnica dokładnie odpowiadała
+            // kwocie rabatu, np. 3 zł przy 3 szt. i rabacie dającym różnicę 1 zł/szt.).
+            $priceNet = (float) $product->order_product_price;
 
             // Pobranie stawki VAT
             $taxRate = 0;
@@ -1136,39 +1141,22 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 'total_price_gross' => round($priceGross * $qty, 2),
             ];
 
-            // Dodaj rabat tylko jeśli istnieje
-            if (isset($product->order_product_discount_info)) {
-                $info    = $product->order_product_discount_info;
-                $flat    = isset($info->discount_flat_amount) ? (float) $info->discount_flat_amount : 0.0;
-                $percent = isset($info->discount_percent_amount) ? (float) $info->discount_percent_amount : 0.0;
+            // Rabat NIE jest dodawany osobno — order_product_price już go uwzględnia (patrz wyżej),
+            // więc dodatkowe pole 'discount' byłoby podwójnym odjęciem tej samej kwoty.
 
-                if ($flat > 0) {
-                    $position['discount'] = $flat;
-                } elseif ($percent > 0) {
-                    $position['discount_percent'] = $percent;
-                }
-            }
+            // Agregujemy identyczne pozycje (nazwa + VAT + cena jednostkowa brutto)
+            $unitGross = $qty > 0 ? ($position['total_price_gross'] / $qty) : $position['total_price_gross'];
+            $key = $position['name'] . '|' . number_format($position['tax'], 4) . '|' . number_format($unitGross, 4);
 
-            $hasDiscount = isset($position['discount']) || isset($position['discount_percent']);
-
-            if ($hasDiscount) {
-                // Pozycje z rabatem zostawiamy osobno, by nie gubić metadanych rabatu
-                $positions[] = $position;
+            if (isset($aggregated[$key])) {
+                $aggregated[$key]['quantity'] += $qty;
+                $aggregated[$key]['total_price_gross'] = round($aggregated[$key]['total_price_gross'] + $position['total_price_gross'], 2);
             } else {
-                // Agregujemy identyczne pozycje (nazwa + VAT + cena jednostkowa brutto)
-                $unitGross = $qty > 0 ? ($position['total_price_gross'] / $qty) : $position['total_price_gross'];
-                $key = $position['name'] . '|' . number_format($position['tax'], 4) . '|' . number_format($unitGross, 4);
-
-                if (isset($aggregated[$key])) {
-                    $aggregated[$key]['quantity'] += $qty;
-                    $aggregated[$key]['total_price_gross'] = round($aggregated[$key]['total_price_gross'] + $position['total_price_gross'], 2);
-                } else {
-                    $aggregated[$key] = $position;
-                }
+                $aggregated[$key] = $position;
             }
         }
 
-        // Dołóż zagregowane pozycje (bez rabatów) do listy wynikowej
+        // Dołóż zagregowane pozycje do listy wynikowej
         $positions = array_merge($positions, array_values($aggregated));
 
         // Dodaj pozycje wysyłki (tylko jeśli cena > 0)
@@ -1439,10 +1427,12 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $productCode = 'order_' . $product->order_id . '_prod_' . $product->order_product_id;
         }
 
+        $productName = strip_tags($product->order_product_name);
+
         $payload = [
             'api_token' => $apiToken,
             'product'   => [
-                'name'      => strip_tags($product->order_product_name),
+                'name'      => $productName,
                 'code'      => $productCode,
                 'price_net' => (float) $product->order_product_price,
                 'tax'       => $taxRate,
@@ -1470,9 +1460,27 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                     if (isset($p['code']) && strtolower(trim($p['code'])) === strtolower(trim($productCode))) {
                         $productId = $p['id'];
                         if ($debug) {
-                            $this->log($logFile, "Znaleziono istniejący produkt ID={$productId}");
+                            $this->log($logFile, "Znaleziono istniejący produkt ID={$productId} (dopasowanie po kodzie)");
                         }
                         break;
+                    }
+                }
+
+                // Fallback: wyszukiwanie Fakturowni (search=) jest rozmyte i dopasowuje też po
+                // nazwie, więc mogło zwrócić produkt "osierocony" — bez naszego stabilnego kodu
+                // (utworzony ręcznie albo przed ujednoliceniem kodów). Bez tego fallbacku taki
+                // produkt nie łapał się na dokładne dopasowanie kodu i tworzył się duplikat.
+                // Dopasowanie po nazwie + PUT poniżej nadpisuje mu kod — kolejne wyszukiwania
+                // trafią już bezpośrednio po kodzie (samonaprawiająca się zbieżność).
+                if ($productId === null) {
+                    foreach ($productsList as $p) {
+                        if (isset($p['name']) && strtolower(trim($p['name'])) === strtolower(trim($productName))) {
+                            $productId = $p['id'];
+                            if ($debug) {
+                                $this->log($logFile, "Znaleziono istniejący produkt ID={$productId} po nazwie (kod się nie zgadzał — zostanie ujednolicony)");
+                            }
+                            break;
+                        }
                     }
                 }
             }
