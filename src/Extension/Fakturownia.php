@@ -239,10 +239,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
 
             // Kod kuponu nie jest już osobną pozycją (patrz buildPositions) — opcjonalnie
-            // dopisujemy go do pola 'Uwagi' dokumentu, żeby nie znikła informacja, który
-            // kupon został użyty. Wyłączalne w ustawieniach wtyczki (coupon_note).
+            // dopisujemy go razem z kwotą do pola 'Uwagi' dokumentu, żeby nie znikła informacja,
+            // który kupon został użyty i o ile obniżył zamówienie. Wyłączalne w ustawieniach
+            // wtyczki (coupon_note).
             $couponNoteText = ($couponNoteEnabled && !empty($couponCode) && $couponValue > 0)
-                ? 'Kupon rabatowy: ' . $couponCode
+                ? 'Kupon rabatowy: ' . $couponCode . ' (-' . number_format($couponValue, 2, ',', ' ') . ' zł)'
                 : '';
 
             // Strażnik uzgodnienia — porównaj sumę pozycji z kwotą zamówienia.

@@ -100,7 +100,7 @@ Kupon rabatowy (`order_discount_code`/`order_discount_price` z HikaShop) **nie j
 
 > Jeśli mimo to rabat na dokumencie wygląda źle, sprawdź: **Ustawienia → Ustawienia konta → Konfiguracja → Sposoby wyliczania → „Jak obliczać rabat"** — wtyczka wysyła `discount_kind: "amount"` (rabat kwotowy) per dokument, co powinno nadpisać ustawienie konta, ale w razie wątpliwości ustaw tam też „kwotowo".
 
-Kod kuponu (np. „Kupon1") można dodatkowo dopisać w polu **„Uwagi"** dokumentu (nie jako pozycja — bezpieczne dla druku fiskalnego) — steruje tym ustawienie wtyczki **„Dopisz kupon w uwagach dokumentu"** (włączone domyślnie, można wyłączyć).
+Kod i kwota kuponu (np. „Kupon rabatowy: Kupon1 (-1,00 zł)") można dodatkowo dopisać w polu **„Uwagi"** dokumentu (nie jako pozycja — bezpieczne dla druku fiskalnego) — steruje tym ustawienie wtyczki **„Dopisz kupon w uwagach dokumentu"** (włączone domyślnie, można wyłączyć).
 
 ---
 
