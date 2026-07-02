@@ -243,7 +243,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             // który kupon został użyty i o ile obniżył zamówienie. Wyłączalne w ustawieniach
             // wtyczki (coupon_note).
             $couponNoteText = ($couponNoteEnabled && !empty($couponCode) && $couponValue > 0)
-                ? 'Kupon rabatowy: ' . $couponCode . ' (-' . number_format($couponValue, 2, ',', ' ') . ' zł)'
+                ? 'Kupon rabatowy: ' . $couponCode . ' (-' . number_format($couponValue, 2, ',', ' ') . ' ' . $currencyCode . ')'
                 : '';
 
             // Strażnik uzgodnienia — porównaj sumę pozycji z kwotą zamówienia.
