@@ -107,12 +107,35 @@ Kod i kwota kuponu (np. „Kupon rabatowy: Kupon1 (-1,00 PLN)" — w walucie zam
 
 ## Anulowanie i zwrot zamówienia (korekta)
 
-Gdy zamówienie, które **ma już wystawiony dokument** w Fakturowni, zmieni status na anulowany/zwrócony (domyślnie statusy `cancelled` i `refunded` — to też domyślne statusy rdzenia HikaShop), wtyczka **zawsze** dopisze wpis w historii zamówienia informujący, że dokument wymaga korekty — niezależnie od ustawień poniżej.
+Gdy zamówienie, które **ma już wystawiony dokument** w Fakturowni, zmieni status na anulowany/zwrócony, wtyczka **zawsze** dopisze wpis w historii zamówienia informujący, że dokument wymaga korekty — niezależnie od ustawień poniżej.
 
-- **Status(y) anulowania/zwrotu** — pole tekstowe (domyślnie `cancelled,refunded`), kilka statusów po przecinku. Wyczyszczenie pola wyłącza całą funkcję.
+- **Status(y) anulowania/zwrotu** — domyślnie `auto`: wtyczka sama pobiera listę z HikaShop (**System → Statusy zamówień** — wszystkie statusy z zaznaczoną kolumną **„cancelled"**; standardowo `cancelled` i `refunded`, ale obejmuje też Twoje własne statusy z tą flagą, np. `zwrot`). Możesz też wpisać ręcznie klucze statusów (namekey) po przecinku — to nadpisuje tryb auto. Wyczyszczenie pola wyłącza całą funkcję.
+
+  **Po co tryb `auto`?** HikaShop już wie, które statusy oznaczają anulowanie — właśnie po to jest kolumna „cancelled" w Statusach zamówień (używa jej m.in. do zwalniania stanu magazynowego). Bez trybu auto wtyczka trzymałaby **drugą, własną kopię** tej samej listy: tworzysz nowy status zwrotu, zaznaczasz mu ptaszek w HikaShop i… musisz pamiętać, żeby dopisać go też w ustawieniach wtyczki — inaczej korekta cicho nie powstanie. Dwie kopie tej samej informacji zawsze w końcu się rozjadą. `auto` = jedna lista, zarządzana w jednym, natywnym miejscu HikaShop. Ręczną listę wpisuj tylko wtedy, gdy celowo chcesz, żeby wtyczka reagowała na inne statusy niż flagi HikaShop (np. status ma ptaszek „cancelled" dla magazynu, ale nie chcesz dla niego korekt).
 - **Automatyczna korekta** (domyślnie **wyłączona**) — gdy włączona, wtyczka sama wystawi w Fakturowni fakturę korygującą **do zera** (pełny zwrot/anulowanie całości — bez obsługi zwrotów częściowych, tak jak oficjalna wtyczka Fakturownia dla WooCommerce). Bez tego ustawienia korektę trzeba wystawić ręcznie w Fakturowni po otrzymaniu powiadomienia.
 
 > To tworzy prawdziwy dokument księgowy — zanim włączysz automatyczną korektę, przetestuj pełny cykl (zamówienie → faktura → anulowanie → korekta) na koncie testowym Fakturowni.
+>
+> Korekta zeruje fakturę, ale zarejestrowana wcześniej płatność pozostaje w Fakturowni — zwrot pieniędzy klientowi księgujesz ręcznie.
+
+## Statusy zamówień (w tym własne)
+
+Wtyczka rozpoznaje statusy po **kluczu** (namekey) z **HikaShop → System → Statusy zamówień** — nie po wyświetlanej etykiecie. Działa to też z własnymi statusami, które tam utworzysz:
+
+| Ustawienie wtyczki | Co robi | Domyślnie |
+|---|---|---|
+| Status wyzwalający wystawienie | przy tym statusie powstaje faktura/paragon | `confirmed` (zamówienie opłacone) |
+| Status(y) anulowania/zwrotu | przy tym statusie zamówienie z dokumentem wymaga korekty | `auto` — statusy z flagą „cancelled" w HikaShop |
+
+Pozostałe statusy (`created`, `pending`, `shipped` itd. oraz własne w rodzaju „w przygotowaniu", „oczekuje na odbiór") wtyczka po prostu ignoruje — nic nie wystawia i nie koryguje.
+
+Przykłady z własnymi statusami:
+
+- **„Zapłacono gotówką w sklepie"** (odbiór osobisty) — status oznacza opłacone zamówienie, więc dopisz jego klucz do statusu wyzwalającego, np. `confirmed,zaplacono_gotowka`. Dokument wystawi się przy którymkolwiek z nich (tylko raz — ochrona przed duplikatami).
+- **„Zwrot towaru"** — zaznacz mu w HikaShop kolumnę „cancelled", a tryb `auto` wykryje go bez zmian we wtyczce.
+- **„Oczekuje na odbiór"** — nic nie rób; status neutralny, wtyczka go ignoruje.
+
+> **Ważne:** do statusu wyzwalającego dopisuj **tylko statusy oznaczające opłacone zamówienie** — wtyczka wraz z fakturą od razu rejestruje w Fakturowni płatność. Status w rodzaju „wysłane za pobraniem" (płatność dopiero przy odbiorze) zarejestrowałby płatność, której jeszcze nie ma.
 
 ---
 

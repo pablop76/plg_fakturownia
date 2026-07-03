@@ -104,7 +104,7 @@
                 <field
                     name="correction_status"
                     type="text"
-                    default="cancelled,refunded"
+                    default="auto"
                     label="PLG_HIKASHOP_FAKTUROWNIA_CORRECTION_STATUS_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_CORRECTION_STATUS_DESC"
                     size="40"

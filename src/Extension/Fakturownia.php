@@ -797,10 +797,13 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
     /**
      * Zwraca listę statusów zamówienia traktowanych jako anulowanie/zwrot PO wystawieniu
-     * dokumentu (wymagających korekty). Konfigurowalne polem 'correction_status'
-     * (domyślnie 'cancelled,refunded' — to też domyślne statusy HikaShop rdzenia,
-     * patrz install.hikashop.php: cancelled_order_status). Pusta wartość = funkcja
-     * wyłączona (admin może celowo wyczyścić pole, jeśli nie pasuje do jego statusów).
+     * dokumentu (wymagających korekty). Pole 'correction_status':
+     * - 'auto' (domyślne) — lista pobierana z konfiguracji HikaShop
+     *   (cancelled_order_status = statusy z zaznaczoną kolumną „cancelled" w
+     *   System → Statusy zamówień), więc WŁASNE statusy admina z tą flagą działają
+     *   bez konfigurowania wtyczki;
+     * - jawna lista kluczy (namekey) po przecinku — ręczne nadpisanie;
+     * - puste pole — funkcja wyłączona.
      *
      * @return  array
      *
@@ -808,7 +811,27 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      */
     private function getCorrectionStatuses(): array
     {
-        $raw = (string) $this->params->get('correction_status', 'cancelled,refunded');
+        $raw = trim((string) $this->params->get('correction_status', 'auto'));
+
+        if ($raw === '') {
+            return [];
+        }
+
+        if (strcasecmp($raw, 'auto') === 0) {
+            // hikashop_config() jest dostępne, bo getOrderFull() (wywoływane wcześniej
+            // w onAfterOrderUpdate) ładuje helper HikaShop; guard na wszelki wypadek.
+            $raw = '';
+
+            if (function_exists('hikashop_config')) {
+                $config = hikashop_config();
+                $raw    = trim((string) $config->get('cancelled_order_status', ''));
+            }
+
+            if ($raw === '') {
+                // Domyślne statusy anulowania rdzenia HikaShop (install.hikashop.php)
+                $raw = 'cancelled,refunded';
+            }
+        }
 
         return array_values(array_filter(array_map('trim', explode(',', $raw))));
     }
