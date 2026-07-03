@@ -17,6 +17,9 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 - **Ochrona przed duplikatami** — to samo zamówienie nie wystawi dwóch faktur.
 - Opcjonalne automatyczne wysyłanie faktury e-mailem do klienta.
 - **Powiadomienie o konieczności korekty** przy anulowaniu/zwrocie zamówienia po wystawieniu dokumentu, z opcją automatycznego wystawienia korekty do zera.
+- **Przycisk „Wystaw ponownie"** w widoku zamówienia w panelu — wymusza ponowne wystawienie dokumentu (np. po poprawieniu danych i usunięciu błędnego dokumentu w Fakturowni).
+- **Konfigurowalny termin płatności** (domyślnie 0 dni — zamówienie jest już opłacone).
+- Stawki VAT wysyłki i kosztu płatności pobierane **z zamówienia HikaShop** (kategorie podatkowe metod wysyłki/płatności) — dokument odzwierciedla to, co klient faktycznie zapłacił.
 
 ---
 
@@ -36,6 +39,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **Nazwa firmy sprzedawcy** (zgodna z wpisem w Fakturowni)
    - **NIP sprzedawcy**
    - **Status wyzwalający** — przy jakim statusie zamówienia wystawić dokument (domyślnie `confirmed`; można podać kilka po przecinku, np. `confirmed,shipped`)
+   - **Termin płatności (dni)** — data „Termin płatności" na dokumencie, liczona od wystawienia (domyślnie `0`, bo zamówienie przy statusie `confirmed` jest już opłacone)
    - **Typ dokumentu:**
      - **Faktura VAT** — każde zamówienie dostaje fakturę,
      - **Auto** — paragon domyślnie, a faktura gdy klient poda NIP lub zaznaczy „Chcę fakturę VAT" (wymaga modułu paragony.pl).
@@ -136,6 +140,20 @@ Przykłady z własnymi statusami:
 - **„Oczekuje na odbiór"** — nic nie rób; status neutralny, wtyczka go ignoruje.
 
 > **Ważne:** do statusu wyzwalającego dopisuj **tylko statusy oznaczające opłacone zamówienie** — wtyczka wraz z fakturą od razu rejestruje w Fakturowni płatność. Status w rodzaju „wysłane za pobraniem" (płatność dopiero przy odbiorze) zarejestrowałby płatność, której jeszcze nie ma.
+
+---
+
+## Przycisk „Wystaw ponownie"
+
+W widoku zamówienia w panelu HikaShop (pod listą produktów) wtyczka pokazuje sekcję **Fakturownia**: aktualny stan (ID wystawionego dokumentu / błąd / brak dokumentu) oraz przycisk **„Wystaw ponownie w Fakturowni"**. Przycisk czyści znaczniki wystawienia dla tego zamówienia i od razu przepuszcza je przez normalną ścieżkę wystawiania (wszystkie walidacje i ochrona przed duplikatami działają jak zwykle).
+
+Kiedy się przydaje:
+
+- dokument wystawił się z błędnymi danymi → poprawiasz dane w zamówieniu, **usuwasz błędny dokument w Fakturowni**, klikasz „Wystaw ponownie";
+- ktoś omyłkowo usunął dokument w Fakturowni, a sklep uważa, że faktura już jest;
+- próba wystawienia utknęła (np. chwilowa awaria API).
+
+> **Uwaga:** wtyczka niczego nie usuwa w Fakturowni. Jeśli poprzedni dokument nadal tam istnieje, powstanie **duplikat** — dlatego przed ponownym wystawieniem usuń go w Fakturowni (przycisk pokazuje to ostrzeżenie przed potwierdzeniem). Zamówienie musi też mieć status wyzwalający (domyślnie `confirmed`), inaczej wystawienie zostanie pominięte.
 
 ---
 

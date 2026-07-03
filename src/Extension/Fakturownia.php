@@ -16,6 +16,8 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Http\HttpFactory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\Session\Session;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Event\SubscriberInterface;
 
 /**
@@ -60,8 +62,22 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     public static function getSubscribedEvents(): array
     {
         return [
-            'onAfterOrderUpdate' => 'onAfterOrderUpdate',
+            'onAfterOrderUpdate'                  => 'onAfterOrderUpdate',
+            'onAfterOrderProductsListingDisplay'  => 'onAfterOrderProductsListingDisplay',
+            'onAjaxFakturownia'                   => 'onAjaxFakturownia',
         ];
+    }
+
+    /**
+     * Ścieżka pliku logu wtyczki (rozszerzenie .php + nagłówek die() — patrz initLogFile).
+     *
+     * @return  string
+     *
+     * @since   2.1.0
+     */
+    private function getLogFile(): string
+    {
+        return JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log.php';
     }
 
     /**
@@ -95,7 +111,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
         $this->processedOrders[] = $orderId;
 
-        $logFile    = JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log.php';
+        $logFile    = $this->getLogFile();
         $debugOrder = (int) $this->params->get('debug_order', 0);
         $debug      = (int) $this->params->get('debug', 0);
 
@@ -204,11 +220,21 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        // Koszt metody płatności (payment też bywa nie-obiektem)
+        // Metoda płatności (payment też bywa nie-obiektem)
         $payment       = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
         $paymentName   = $payment->payment_name ?? '';
-        $paymentPrice  = isset($payment->payment_price) ? (float) $payment->payment_price : 0.0;
         $paymentMethod = $this->mapPaymentMethod($paymentName);
+
+        // Koszt metody płatności — Z ZAMÓWIENIA, nie z konfiguracji metody:
+        // order_payment_price to kwota BRUTTO pobrana od klienta, a order_payment_tax
+        // to zawarty w niej podatek. HikaShop liczy go sam wg kategorii podatkowej
+        // przypisanej metodzie płatności (core classes/order.php: order_payment_price
+        // = payment_price_with_tax) — dokument ma odzwierciedlać to, co klient
+        // faktycznie zapłacił, a nie stawkę skonfigurowaną osobno we wtyczce.
+        $paymentFeeGross = isset($orderFull->order_payment_price) ? (float) $orderFull->order_payment_price : 0.0;
+        $paymentFeeTax   = isset($orderFull->order_payment_tax) ? (float) $orderFull->order_payment_tax : 0.0;
+        $paymentFeeNet   = $paymentFeeGross - $paymentFeeTax;
+        $paymentFeeVat   = $paymentFeeNet > 0 ? round(($paymentFeeTax / $paymentFeeNet) * 100, 2) : 0.0;
 
         // Data płatności - używamy rzeczywistej daty zamiast 00:00
         $paymentDate = date('Y-m-d H:i:s', $orderFull->order_created);
@@ -249,7 +275,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
 
             // 2. Buduje pozycje faktury
-            $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
+            $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentFeeGross, $paymentFeeVat, $couponCode, $couponValue);
 
             // Kod kuponu nie jest już osobną pozycją (patrz buildPositions) — opcjonalnie
             // dopisujemy go razem z kwotą do pola 'Uwagi' dokumentu, żeby nie znikła informacja,
@@ -500,6 +526,62 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             return ($invoiceId !== null && $invoiceId !== '') ? (int) $invoiceId : null;
         } catch (\Exception $e) {
             return null;
+        }
+    }
+
+    /**
+     * Odczytuje cały wiersz blokady zamówienia (invoice_id + state) — do wyświetlenia
+     * stanu w panelu przy przycisku „Wystaw ponownie".
+     *
+     * @param   int  $orderId  ID zamówienia
+     *
+     * @return  object|null
+     *
+     * @since   2.1.0
+     */
+    private function getLockRow(int $orderId): ?object
+    {
+        try {
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
+
+            $query = $db->getQuery(true)
+                ->select($db->quoteName(['invoice_id', 'state']))
+                ->from($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+
+            return $db->loadObject() ?: null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Usuwa znaczniki wystawienia dla zamówienia (wiersz tabeli blokad) — pozwala
+     * przyciskowi „Wystaw ponownie" przepuścić zamówienie przez normalną ścieżkę
+     * wystawiania od zera. NICZEGO nie usuwa w Fakturowni: jeśli poprzedni dokument
+     * tam istnieje, powstanie duplikat (admin potwierdza ostrzeżenie przed akcją).
+     *
+     * @param   int  $orderId  ID zamówienia
+     *
+     * @return  void
+     *
+     * @since   2.1.0
+     */
+    private function resetIssueMarkers(int $orderId): void
+    {
+        try {
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
+
+            $query = $db->getQuery(true)
+                ->delete($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId);
+            $db->setQuery($query);
+            $db->execute();
+        } catch (\Exception $e) {
+            // Brak wiersza/tabeli — nieszkodliwe, claimOrder i tak zrobi świeży INSERT
         }
     }
 
@@ -963,7 +1045,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      *
      * @since   2.0.0
      */
-    private function notifyAdmin(string $message, int $orderId = 0): void
+    private function notifyAdmin(string $message, int $orderId = 0, bool $isError = true): void
     {
         try {
             // Wyodrębnij orderId z wiadomości jeśli nie podano
@@ -972,8 +1054,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
 
             if ($orderId > 0) {
-                // Zapisz błąd do historii zamówienia HikaShop
-                $this->addOrderHistory($orderId, $message);
+                // Zapisz wpis do historii zamówienia HikaShop
+                $this->addOrderHistory($orderId, $message, $isError);
             }
         } catch (\Exception $e) {
             // Ignoruj - błąd już jest w logu
@@ -985,12 +1067,15 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      *
      * @param   int     $orderId  ID zamówienia
      * @param   string  $message  Treść wiadomości
+     * @param   bool    $isError  false = wpis informacyjny (np. sukces korekty),
+     *                            bez etykiety błędu — inaczej sukcesy wyglądały
+     *                            w historii jak awarie
      *
      * @return  void
      *
      * @since   2.0.0
      */
-    private function addOrderHistory(int $orderId, string $message): void
+    private function addOrderHistory(int $orderId, string $message, bool $isError = true): void
     {
         try {
             $db = Factory::getContainer()->get('DatabaseDriver');
@@ -998,9 +1083,9 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $history = new \stdClass();
             $history->history_order_id = $orderId;
             $history->history_created = time();
-            $history->history_type = 'fakturownia_error';
+            $history->history_type = $isError ? 'fakturownia_error' : 'fakturownia_info';
             $history->history_notified = 0;
-            $history->history_data = 'BŁĄD FAKTUROWNIA: ' . $message;
+            $history->history_data = ($isError ? 'BŁĄD FAKTUROWNIA: ' : 'FAKTUROWNIA: ') . $message;
             $history->history_user_id = 0;
             $history->history_ip = '';
             $history->history_new_status = '';
@@ -1198,13 +1283,14 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     /**
      * Buduje tablicę pozycji faktury (produkty i wysyłka) na podstawie zamówienia.
      *
-     * @param   object  $orderFull     Full order object
-     * @param   array   $products      Products array
-     * @param   array   $shippings     Shippings array
-     * @param   string  $paymentName   Payment name
-     * @param   float   $paymentPrice  Payment price
-     * @param   string  $couponCode    Coupon code
-     * @param   float   $couponValue   Coupon value
+     * @param   object  $orderFull        Full order object
+     * @param   array   $products         Products array
+     * @param   array   $shippings        Shippings array
+     * @param   string  $paymentName      Payment name
+     * @param   float   $paymentFeeGross  Koszt płatności BRUTTO (order_payment_price)
+     * @param   float   $paymentFeeVat    Stawka VAT kosztu płatności w %, wyliczona z zamówienia
+     * @param   string  $couponCode       Coupon code
+     * @param   float   $couponValue      Coupon value
      *
      * @return  array
      *
@@ -1215,7 +1301,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         array $products,
         array $shippings,
         string $paymentName,
-        float $paymentPrice,
+        float $paymentFeeGross,
+        float $paymentFeeVat,
         string $couponCode,
         float $couponValue
     ): array {
@@ -1332,16 +1419,16 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             ];
         }
 
-        // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0
-        if ($paymentPrice > 0) {
-            $taxRate    = 23.0;
-            $priceGross = $paymentPrice * (1 + $taxRate / 100);
-
+        // Dodaj koszt płatności, jeśli istnieje i ma wartość > 0. Kwota brutto i stawka
+        // VAT pochodzą z ZAMÓWIENIA (order_payment_price/order_payment_tax — HikaShop
+        // liczy je wg kategorii podatkowej metody płatności), a nie z osobnej
+        // konfiguracji wtyczki — pozycja odzwierciedla to, co klient realnie zapłacił.
+        if ($paymentFeeGross > 0) {
             $positions[] = [
                 'name'              => 'Koszt płatności: ' . strip_tags($paymentName ?: 'Płatność'),
                 'quantity'          => 1,
-                'tax'               => $taxRate,
-                'total_price_gross' => round($priceGross, 2),
+                'tax'               => $paymentFeeVat,
+                'total_price_gross' => round($paymentFeeGross, 2),
             ];
         }
 
@@ -1442,6 +1529,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             }
         }
 
+        // Termin płatności — konfigurowalny (domyślnie 0 dni: przy statusie wyzwalającym
+        // 'confirmed' zamówienie jest już opłacone, więc dokument nie powinien pokazywać
+        // przyszłego terminu; wcześniej sztywne +7 dni).
+        $paymentDays = max(0, (int) $this->params->get('payment_days', 0));
+
         $payload = [
             'api_token' => $apiToken,
             'invoice'   => [
@@ -1449,7 +1541,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 'number'          => null,
                 'sell_date'       => date('Y-m-d', $orderFull->order_created),
                 'issue_date'      => date('Y-m-d', $orderFull->order_invoice_created),
-                'payment_to'      => date('Y-m-d', strtotime('+7 days', $orderFull->order_invoice_created)),
+                'payment_to'      => date('Y-m-d', strtotime('+' . $paymentDays . ' days', $orderFull->order_invoice_created)),
                 'seller_name'     => $sellerName,
                 'seller_tax_no'   => $sellerTaxNo,
                 'buyer_name'      => $billing->address_company ?: $billing->address_firstname . ' ' . $billing->address_lastname,
@@ -1575,9 +1667,10 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
         $this->log($logFile, "Zamówienie #{$orderId}: status zmienił się na '{$currentStatus}', a dokument (ID {$existingInvoiceId}) już istnieje w Fakturowni — wymaga korekty");
         $this->notifyAdmin(
-            "Fakturownia - zamówienie #{$orderId} zmieniło status na '{$currentStatus}', ale ma już wystawiony dokument (ID {$existingInvoiceId}) w Fakturowni. "
+            "Zamówienie #{$orderId} zmieniło status na '{$currentStatus}', a ma już wystawiony dokument (ID {$existingInvoiceId}) w Fakturowni. "
                 . ($autoCorrection ? 'Trwa automatyczne wystawianie korekty...' : 'Wystaw korektę ręcznie w Fakturowni.'),
-            $orderId
+            $orderId,
+            false
         );
 
         if (!$autoCorrection) {
@@ -1594,10 +1687,15 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $payment   = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
 
             $paymentName  = $payment->payment_name ?? '';
-            $paymentPrice = isset($payment->payment_price) ? (float) $payment->payment_price : 0.0;
             $couponCode   = $orderFull->order_discount_code ?? '';
             $couponValue  = isset($orderFull->order_discount_price) ? (float) $orderFull->order_discount_price : 0.0;
             $userEmail    = $customer->user_email ?? 'Brak danych';
+
+            // Koszt płatności z zamówienia (brutto + wyliczona stawka) — jak w głównym przepływie
+            $paymentFeeGross = isset($orderFull->order_payment_price) ? (float) $orderFull->order_payment_price : 0.0;
+            $paymentFeeTax   = isset($orderFull->order_payment_tax) ? (float) $orderFull->order_payment_tax : 0.0;
+            $paymentFeeNet   = $paymentFeeGross - $paymentFeeTax;
+            $paymentFeeVat   = $paymentFeeNet > 0 ? round(($paymentFeeTax / $paymentFeeNet) * 100, 2) : 0.0;
 
             $http     = HttpFactory::getHttp();
             $clientId = $this->addOrUpdateClientToFakturownia($http, $apiToken, $subdomain, $billing, $userEmail, $logFile, $debug);
@@ -1608,7 +1706,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             // Odtwarzamy oryginalne pozycje tą samą funkcją co przy wystawianiu faktury —
             // gwarantuje to identyczne kwoty/VAT/rabaty jak na korygowanym dokumencie.
-            $originalPositions   = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentPrice, $couponCode, $couponValue);
+            $originalPositions   = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentFeeGross, $paymentFeeVat, $couponCode, $couponValue);
             $correctionPositions = $this->buildCorrectionPositions($originalPositions);
 
             if (empty($correctionPositions)) {
@@ -1626,7 +1724,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             $this->setLockState($orderId, 'corrected');
             $this->log($logFile, "Zamówienie #{$orderId}: korekta wystawiona automatycznie (ID {$correctionId})");
-            $this->notifyAdmin("Fakturownia - korekta wystawiona automatycznie dla zamówienia #{$orderId} (ID {$correctionId})", $orderId);
+            $this->notifyAdmin("Korekta wystawiona automatycznie dla zamówienia #{$orderId} (ID {$correctionId})", $orderId, false);
         } catch (\Throwable $e) {
             $this->setLockState($orderId, 'correction_error');
             $this->log($logFile, "Zamówienie #{$orderId}: BŁĄD automatycznej korekty: " . $e->getMessage());
@@ -1759,6 +1857,139 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $this->log($logFile, "BŁĄD API korekty ({$response->code}): {$errorMsg}");
 
         throw new \Exception("Błąd API Fakturownia korekta ({$response->code}): {$errorMsg}");
+    }
+
+    /**
+     * Wyświetla sekcję Fakturowni (stan dokumentu + przycisk „Wystaw ponownie")
+     * pod listą produktów w widoku zamówienia w panelu administracyjnym HikaShop.
+     * HikaShop odpala ten trigger w środku szablonu — wtyczki echo'ują HTML wprost.
+     *
+     * @param   mixed  $event  Event object lub obiekt zamówienia (wywołanie bezpośrednie)
+     *
+     * @return  void
+     *
+     * @since   2.1.0
+     */
+    public function onAfterOrderProductsListingDisplay($event): void
+    {
+        if (is_object($event) && method_exists($event, 'getArgument')) {
+            $order  = $event->getArgument(0);
+            $layout = (string) $event->getArgument(1);
+        } else {
+            $args   = func_get_args();
+            $order  = $args[0] ?? null;
+            $layout = (string) ($args[1] ?? '');
+        }
+
+        // Tylko backendowy podgląd/edycja zamówienia — NIE wydruk faktury HikaShop
+        // (ten sam trigger leci z layoutem 'order_back_invoice').
+        if ($layout !== 'order_back_show' || !is_object($order) || empty($order->order_id)) {
+            return;
+        }
+
+        $app = Factory::getApplication();
+
+        if (!$app->isClient('administrator')) {
+            return;
+        }
+
+        $orderId = (int) $order->order_id;
+        $lockRow = $this->getLockRow($orderId);
+
+        if ($lockRow && !empty($lockRow->invoice_id)) {
+            $statusText = Text::sprintf('PLG_HIKASHOP_FAKTUROWNIA_STATE_ISSUED', (int) $lockRow->invoice_id);
+
+            if (in_array($lockRow->state, ['corrected', 'notified'], true)) {
+                $statusText .= ' ' . Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_' . strtoupper($lockRow->state));
+            }
+        } elseif ($lockRow && in_array($lockRow->state, ['error', 'correction_error'], true)) {
+            $statusText = Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_ERROR');
+        } else {
+            $statusText = Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_NONE');
+        }
+
+        $url = Uri::base() . 'index.php?option=com_ajax&group=hikashop&plugin=fakturownia&format=raw'
+            . '&order_id=' . $orderId . '&' . Session::getFormToken() . '=1';
+
+        $confirm = htmlspecialchars(Text::_('PLG_HIKASHOP_FAKTUROWNIA_REISSUE_CONFIRM'), ENT_QUOTES, 'UTF-8');
+
+        echo '<fieldset class="adminform" id="htmlfieldset_fakturownia">'
+            . '<legend>Fakturownia</legend>'
+            . '<p>' . htmlspecialchars($statusText, ENT_QUOTES, 'UTF-8') . '</p>'
+            . '<a class="btn btn-primary" href="' . $url . '" onclick="return confirm(\'' . $confirm . '\');">'
+            . htmlspecialchars(Text::_('PLG_HIKASHOP_FAKTUROWNIA_REISSUE_BUTTON'), ENT_QUOTES, 'UTF-8')
+            . '</a>'
+            . '</fieldset>';
+    }
+
+    /**
+     * Obsługa przycisku „Wystaw ponownie" (com_ajax: index.php?option=com_ajax&group=
+     * hikashop&plugin=fakturownia). Czyści znaczniki wystawienia i przepuszcza
+     * zamówienie przez normalną ścieżkę wystawiania, po czym wraca do widoku
+     * zamówienia z komunikatem o wyniku.
+     *
+     * @param   mixed  $event  Event object (nieużywany — dane z requestu)
+     *
+     * @return  void
+     *
+     * @since   2.1.0
+     */
+    public function onAjaxFakturownia($event = null): void
+    {
+        $app = Factory::getApplication();
+
+        // Wyłącznie panel administracyjny
+        if (!$app->isClient('administrator')) {
+            return;
+        }
+
+        $orderId     = $app->getInput()->getInt('order_id', 0);
+        $redirectUrl = 'index.php?option=com_hikashop&ctrl=order&task=edit&cid[]=' . $orderId;
+
+        // CSRF — token sesji w URL przycisku
+        if (!Session::checkToken('get')) {
+            $app->enqueueMessage(Text::_('JINVALID_TOKEN'), 'error');
+            $app->redirect($redirectUrl);
+
+            return;
+        }
+
+        // Uprawnienia do zarządzania HikaShop
+        $user = $app->getIdentity();
+
+        if (!$user || $user->guest || !$user->authorise('core.manage', 'com_hikashop')) {
+            $app->enqueueMessage(Text::_('JERROR_ALERTNOAUTHOR'), 'error');
+            $app->redirect($redirectUrl);
+
+            return;
+        }
+
+        if ($orderId <= 0) {
+            $app->enqueueMessage(Text::_('PLG_HIKASHOP_FAKTUROWNIA_REISSUE_NO_ORDER'), 'error');
+            $app->redirect('index.php?option=com_hikashop&ctrl=order');
+
+            return;
+        }
+
+        $logFile = $this->getLogFile();
+        $this->initLogFile($logFile);
+        $this->log($logFile, "Zamówienie #{$orderId}: admin '{$user->username}' użył 'Wystaw ponownie' — czyszczę znaczniki i ponawiam wystawienie");
+
+        $this->resetIssueMarkers($orderId);
+
+        // Ponowne wystawienie dokładnie tą samą ścieżką co normalna aktualizacja
+        // zamówienia (walidacje, statusy, ochrona przed duplikatem — wszystko jak zwykle).
+        $this->onAfterOrderUpdate((object) ['order_id' => $orderId]);
+
+        $newInvoiceId = $this->getExistingInvoiceId($orderId);
+
+        if ($newInvoiceId) {
+            $app->enqueueMessage(Text::sprintf('PLG_HIKASHOP_FAKTUROWNIA_REISSUE_SUCCESS', $newInvoiceId));
+        } else {
+            $app->enqueueMessage(Text::_('PLG_HIKASHOP_FAKTUROWNIA_REISSUE_FAILED'), 'warning');
+        }
+
+        $app->redirect($redirectUrl);
     }
 
     /**
