@@ -95,7 +95,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
         $this->processedOrders[] = $orderId;
 
-        $logFile    = JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log';
+        $logFile    = JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log.php';
         $debugOrder = (int) $this->params->get('debug_order', 0);
         $debug      = (int) $this->params->get('debug', 0);
 
@@ -193,9 +193,13 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $currencyCode      = 'PLN';
 
         if ($orderCurrencyInfo && is_string($orderCurrencyInfo)) {
-            $obj = unserialize($orderCurrencyInfo);
+            // HikaShop zapisuje tu czysty stdClass (classes/order.php) — ograniczenie
+            // klas przy unserialize zamyka wektor object injection z danych w bazie.
+            // instanceof zamiast isset(): na zablokowanym obiekcie (__PHP_Incomplete_Class)
+            // nawet isset() emitowałoby Warning.
+            $obj = unserialize($orderCurrencyInfo, ['allowed_classes' => ['stdClass']]);
 
-            if ($obj && isset($obj->currency_code)) {
+            if ($obj instanceof \stdClass && isset($obj->currency_code)) {
                 $currencyCode = $obj->currency_code;
             }
         }
@@ -911,6 +915,12 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     /**
      * Tworzy plik logu jeśli nie istnieje.
      *
+     * Katalog administrator/logs NIE jest chroniony przed pobraniem z przeglądarki
+     * (Joomla nie kładzie tam .htaccess) — dlatego, tak jak logi rdzenia Joomli,
+     * plik ma rozszerzenie .php z nagłówkiem die() w pierwszej linii: przy próbie
+     * otwarcia przez URL serwer wykona die() zamiast wyświetlić zawartość
+     * (log zawiera dane osobowe klientów).
+     *
      * @param   string  $logFile  Log file path
      *
      * @return  void
@@ -920,7 +930,26 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     private function initLogFile(string $logFile): void
     {
         if (!file_exists($logFile)) {
-            file_put_contents($logFile, "Utworzono plik hikashop_fakturownia.log\n");
+            file_put_contents($logFile, "#<?php die('Forbidden.'); ?>\n");
+        }
+
+        // Migracja: starsze wersje pisały do niechronionego pliku .log — przenieś
+        // jego zawartość do chronionego pliku i usuń, żeby dane osobowe nie zostały
+        // pod publicznie dostępnym URL-em.
+        $legacyFile = preg_replace('/\.php$/', '', $logFile);
+
+        if ($legacyFile !== $logFile && file_exists($legacyFile)) {
+            $legacyContent = @file_get_contents($legacyFile);
+
+            if (is_string($legacyContent) && $legacyContent !== '') {
+                file_put_contents($logFile, $legacyContent, FILE_APPEND);
+            }
+
+            if (!@unlink($legacyFile)) {
+                // Nie dało się usunąć — przynajmniej opróżnij, żeby dane osobowe
+                // nie były dostępne publicznie (kolejne żądania ponowią unlink).
+                @file_put_contents($legacyFile, '');
+            }
         }
     }
 
@@ -1046,7 +1075,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         
         // Usuń ukośniki
         $subdomain = trim($subdomain, '/');
-        
+
+        // Zostaw wyłącznie znaki dozwolone w subdomenie — wyklucza wpisanie tu
+        // obcego hosta/ścieżki (token API poleciałby wtedy poza fakturownia.pl).
+        $subdomain = preg_replace('/[^a-z0-9-]/i', '', $subdomain);
+
         return $subdomain;
     }
 

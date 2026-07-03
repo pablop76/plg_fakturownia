@@ -139,12 +139,20 @@ Przykłady z własnymi statusami:
 
 ---
 
+## KSeF
+
+Wtyczka nie wymaga żadnej konfiguracji pod KSeF — wysyłkę e-faktur włącza się **po stronie Fakturowni**: **Ustawienia → Ustawienia konta → KSeF** (tryb automatycznej wysyłki: wyłączona / tylko polskie firmy / wszystkie firmy / wszystkie dokumenty). Przy włączonym trybie automatycznym każda faktura utworzona przez wtyczkę trafia do KSeF tak samo, jak wystawiona ręcznie w panelu. Instrukcja połączenia konta: [Jak połączyć Fakturownię z KSeF (DEMO)](https://pomoc.fakturownia.pl/197913379-Jak-polaczyc-Fakturownie-z-KSeF-DEMO-autoryzacja-integracji-krok-po-kroku).
+
+> Status wysyłki do KSeF (numer KSeF, ewentualne błędy walidacji) sprawdzisz w panelu Fakturowni przy dokumencie — wtyczka nie raportuje go w sklepie.
+
+---
+
 ## Debugowanie
 W ustawieniach wtyczki można włączyć:
 - **Logowanie zamówień** — zapisuje pełne dane zamówienia do logu,
 - **Logowanie API** — zapisuje komunikację z Fakturownią.
 
-Logi znajdują się w: `administrator/logs/hikashop_fakturownia.log`.
+Logi znajdują się w: `administrator/logs/hikashop_fakturownia.log.php` — otwórz przez FTP/menedżer plików. Plik ma rozszerzenie `.php` i nagłówek blokujący **celowo**: katalog logów Joomli nie jest chroniony przed pobraniem z przeglądarki, a log zawiera dane osobowe klientów (tak samo zabezpiecza swoje logi rdzeń Joomli).
 Kluczowe zdarzenia cyklu życia (start, wybór typu dokumentu, wynik) zapisywane są zawsze — niezależnie od trybu debug.
 
 ---
