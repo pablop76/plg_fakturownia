@@ -14,6 +14,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/pablop76/plg_fakturownia/releases/download/v2.2.0/plg_fakturownia-2.2.0.zip</downloadurl>
         </downloads>
+        <sha256>345d1cf2b6c7a1fe80c5de3ef2fe6698a1a816da28e32f5ee5ddf636bcd50e12</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
