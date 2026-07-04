@@ -158,4 +158,9 @@
             </fieldset>
         </fields>
     </config>
+
+    <updateservers>
+        <server type="extension" name="Fakturownia Plugin Updates">
+            https://raw.githubusercontent.com/pablop76/plg_fakturownia/release/updates.xml</server>
+    </updateservers>
 </extension>
