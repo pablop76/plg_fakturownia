@@ -2,7 +2,7 @@
 <extension type="plugin" version="5.0" method="upgrade" group="hikashop">
     <name>PLG_HIKASHOP_FAKTUROWNIA</name>
     <creationDate>2025-01-15</creationDate>
-    <version>2.1.0</version>
+    <version>2.2.0</version>
     <author>Paweł Półtoraczyk</author>
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
@@ -78,6 +78,14 @@
                     min="0"
                     label="PLG_HIKASHOP_FAKTUROWNIA_PAYMENT_DAYS_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_PAYMENT_DAYS_DESC"
+                />
+                <field
+                    name="paid_status"
+                    type="text"
+                    default="auto"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_PAID_STATUS_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_PAID_STATUS_DESC"
+                    size="40"
                 />
                 <field
                     name="invoice_mode"

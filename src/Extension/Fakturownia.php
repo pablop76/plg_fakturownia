@@ -62,6 +62,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     public static function getSubscribedEvents(): array
     {
         return [
+            // Utworzenie zamówienia (checkout) odpala onAfterOrderCreate, NIE
+            // onAfterOrderUpdate — bez tej subskrypcji faktura przy statusie
+            // początkowym (np. wystawianie przed zapłatą) nigdy by nie powstała.
+            // Obie ścieżki obsługuje ta sama metoda (ten sam kształt argumentów).
+            'onAfterOrderCreate'                  => 'onAfterOrderUpdate',
             'onAfterOrderUpdate'                  => 'onAfterOrderUpdate',
             'onAfterOrderProductsListingDisplay'  => 'onAfterOrderProductsListingDisplay',
             'onAjaxFakturownia'                   => 'onAjaxFakturownia',
@@ -146,16 +151,25 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Zamówienie z JUŻ wystawionym dokumentem, które zmieniło status na anulowany/
-        // zwrócony — inna gałąź niż normalne wystawienie (wymaga korekty, nie nowej faktury).
+        // Zamówienie z JUŻ wystawionym dokumentem — inne gałęzie niż normalne wystawienie:
+        // anulowanie/zwrot → korekta; przejście na status opłacony przy dokumencie
+        // nieopłaconym → odroczona rejestracja płatności.
         if ($this->invoiceAlreadyExists($orderFull)) {
             $correctionStatuses = $this->getCorrectionStatuses();
 
             if (!empty($correctionStatuses) && in_array($currentStatus, $correctionStatuses, true)) {
                 $this->handleCorrection($orderFull, $currentStatus, $apiToken, $subdomain, $logFile, $debug);
-            } else {
-                $this->log($logFile, "Zamówienie #{$orderId}: pominięto — faktura już istnieje (tabela blokad)");
+
+                return;
             }
+
+            if (in_array($currentStatus, $this->getPaidStatuses(), true)) {
+                $this->handleDeferredPayment($orderFull, $currentStatus, $apiToken, $subdomain, $logFile, $debug);
+
+                return;
+            }
+
+            $this->log($logFile, "Zamówienie #{$orderId}: pominięto — faktura już istnieje (tabela blokad)");
 
             return;
         }
@@ -205,20 +219,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         // Waluta zamówienia
-        $orderCurrencyInfo = $orderFull->order_currency_info ?? new \stdClass();
-        $currencyCode      = 'PLN';
-
-        if ($orderCurrencyInfo && is_string($orderCurrencyInfo)) {
-            // HikaShop zapisuje tu czysty stdClass (classes/order.php) — ograniczenie
-            // klas przy unserialize zamyka wektor object injection z danych w bazie.
-            // instanceof zamiast isset(): na zablokowanym obiekcie (__PHP_Incomplete_Class)
-            // nawet isset() emitowałoby Warning.
-            $obj = unserialize($orderCurrencyInfo, ['allowed_classes' => ['stdClass']]);
-
-            if ($obj instanceof \stdClass && isset($obj->currency_code)) {
-                $currencyCode = $obj->currency_code;
-            }
-        }
+        $currencyCode = $this->getOrderCurrencyCode($orderFull);
 
         // Metoda płatności (payment też bywa nie-obiektem)
         $payment       = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
@@ -246,6 +247,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         $invoiceMode = $this->params->get('invoice_mode', 'vat');
         $autoSendEmail = $this->params->get('auto_send_email', 0);
         $couponNoteEnabled = (bool) $this->params->get('coupon_note', 1);
+
+        // Czy zamówienie jest OPŁACONE (status na liście paid_status)? Od tego zależy,
+        // czy dokument dostanie od razu płatność, czy pozostanie nieopłacony do czasu
+        // przejścia zamówienia na status opłacony (odroczona rejestracja).
+        $isPaid = in_array($currentStatus, $this->getPaidStatuses(), true);
 
         // Sprawdzamy, czy klient zaznaczył pole invoice_request (pole adresu rozliczeniowego)
         $clientWantsInvoice = $this->checkIfClientWantsInvoice($orderFull, $billing, $customer);
@@ -311,15 +317,24 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             if ($invoiceId) {
                 // 4. Trwałe oznaczenie w tabeli blokad — faktura rozliczona (zapobiega
                 // duplikatom; invoice_id zapisany tu jest jedynym źródłem prawdy, patrz
-                // invoiceAlreadyExists()/getExistingInvoiceId())
-                $this->markOrderDone($orderId, (int) $invoiceId);
+                // invoiceAlreadyExists()/getExistingInvoiceId()). Stan 'done_unpaid'
+                // = dokument bez płatności, czeka na przejście zamówienia na status
+                // opłacony (handleDeferredPayment).
+                $this->markOrderDone($orderId, (int) $invoiceId, $isPaid);
 
                 if ($autoSendEmail) {
                     $this->sendInvoiceByEmail($http, $apiToken, $subdomain, $invoiceId, $logFile, $debug);
                 }
 
-                // 5. Wysyła płatność powiązaną z fakturą do Fakturowni
-                $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $paymentMethod, $paymentDate, $logFile, $debug);
+                // 5. Wysyła płatność powiązaną z fakturą — TYLKO gdy status zamówienia
+                // oznacza opłacone (paid_status). Przy statusie nieopłaconym (np. faktura
+                // przed zapłatą za pobraniem) dokument pozostaje nieopłacony, a płatność
+                // zarejestruje się automatycznie przy przejściu na status opłacony.
+                if ($isPaid) {
+                    $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, $billing, $shipping, $userEmail, $clientId, $invoiceId, $paymentMethod, $paymentDate, $logFile, $debug);
+                } else {
+                    $this->log($logFile, "Zamówienie #{$orderId}: status '{$currentStatus}' nie jest statusem opłaconym — dokument wystawiony BEZ płatności (zarejestruje się przy przejściu na status opłacony)");
+                }
 
                 // 6. Wysyłka produktów do Fakturownia
                 foreach ($products as $product) {
@@ -734,17 +749,20 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
     /**
      * Oznacza zamówienie jako rozliczone (faktura wystawiona).
+     * Stan 'done_unpaid' = dokument wystawiony bez płatności (status zamówienia
+     * nie był opłacony) — czeka na odroczoną rejestrację (handleDeferredPayment).
      *
-     * @param   int  $orderId    ID zamówienia
-     * @param   int  $invoiceId  ID faktury w Fakturowni
+     * @param   int   $orderId    ID zamówienia
+     * @param   int   $invoiceId  ID faktury w Fakturowni
+     * @param   bool  $paid       Czy płatność została zarejestrowana
      *
      * @return  void
      *
      * @since   2.0.0
      */
-    private function markOrderDone(int $orderId, int $invoiceId): void
+    private function markOrderDone(int $orderId, int $invoiceId, bool $paid = true): void
     {
-        $this->setLockState($orderId, 'done', $invoiceId);
+        $this->setLockState($orderId, $paid ? 'done' : 'done_unpaid', $invoiceId);
     }
 
     /**
@@ -764,7 +782,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
     /**
      * Atomowo "zaklepuje" zamówienie z już wystawionym dokumentem do korekty
-     * (anulowanie/zwrot). Przejście możliwe TYLKO ze stanu 'done' — to zamyka
+     * (anulowanie/zwrot). Przejście możliwe TYLKO ze stanu 'done'/'done_unpaid'
+     * (dokument opłacony lub czekający na płatność) — to zamyka
      * wyścig (dwa równoległe wywołania nie skorygują tego samego zamówienia
      * dwukrotnie) i jednocześnie naturalnie blokuje ponowne powiadamianie admina
      * o zamówieniu, które już zostało obsłużone (stan 'done' nie wróci samoistnie).
@@ -793,7 +812,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 ->set($db->quoteName('state') . ' = ' . $db->quote('correcting'))
                 ->set($db->quoteName('modified') . ' = ' . $db->quote($now))
                 ->where($db->quoteName('order_id') . ' = ' . $orderId)
-                ->where($db->quoteName('state') . ' = ' . $db->quote('done'));
+                ->where($db->quoteName('state') . ' IN (' . $db->quote('done') . ', ' . $db->quote('done_unpaid') . ')');
             $db->setQuery($query);
             $db->execute();
 
@@ -867,7 +886,17 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
     /**
      * Zwraca listę statusów zamówienia wyzwalających wystawienie faktury.
-     * Konfigurowalne polem 'trigger_status' (domyślnie 'confirmed').
+     * Konfigurowalne polem 'trigger_status' (domyślnie 'confirmed') — prosta lista
+     * kluczy statusów (namekey) po przecinku.
+     *
+     * Faktury PRZED zapłatą: admin tworzy/wskazuje własny status (np. „Nie opłacone"
+     * dla płatności za pobraniem / przy odbiorze) i wpisuje jego namekey wprost tutaj
+     * (np. confirmed,unpaid). ŚWIADOMIE nie sięgamy po flagę „Unpaid" HikaShopa
+     * (order_unpaid_statuses): zawiera ona status 'created' (każde świeżo złożone
+     * zamówienie), więc dokument powstawałby dla KAŻDEGO koszyka; a dodatkowo ta flaga
+     * steruje przyciskiem „Zapłać" i samodzielnym anulowaniem na froncie, więc jej
+     * ruszanie psułoby płatność klienta. O tym, czy dokument dostaje od razu płatność,
+     * decyduje osobne pole 'paid_status'.
      *
      * @return  array
      *
@@ -876,7 +905,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     private function getTriggerStatuses(): array
     {
         $raw      = (string) $this->params->get('trigger_status', 'confirmed');
-        $statuses = array_values(array_filter(array_map('trim', explode(',', $raw))));
+        $statuses = array_values(array_unique(array_filter(array_map('trim', explode(',', $raw)))));
 
         return !empty($statuses) ? $statuses : ['confirmed'];
     }
@@ -920,6 +949,72 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         return array_values(array_filter(array_map('trim', explode(',', $raw))));
+    }
+
+    /**
+     * Zwraca listę statusów zamówienia oznaczających OPŁACONE zamówienie — od nich
+     * zależy, czy dokument w Fakturowni dostaje od razu płatność ('Opłacona'), czy
+     * pozostaje nieopłacony do czasu przejścia zamówienia na status opłacony
+     * (odroczona rejestracja). Pole 'paid_status':
+     * - 'auto' (domyślne) — status z konfiguracji HikaShop (order_confirmed_status =
+     *   kolumna „confirmed" w System → Statusy zamówień, standardowo 'confirmed');
+     * - jawna lista kluczy (namekey) po przecinku — np. confirmed,zaplacono_gotowka;
+     * - puste pole — płatność NIGDY nie jest rejestrowana automatycznie.
+     *
+     * @return  array
+     *
+     * @since   2.2.0
+     */
+    private function getPaidStatuses(): array
+    {
+        $raw = trim((string) $this->params->get('paid_status', 'auto'));
+
+        if ($raw === '') {
+            return [];
+        }
+
+        if (strcasecmp($raw, 'auto') === 0) {
+            $raw = '';
+
+            if (function_exists('hikashop_config')) {
+                $config = hikashop_config();
+                $raw    = trim((string) $config->get('order_confirmed_status', ''));
+            }
+
+            if ($raw === '') {
+                $raw = 'confirmed';
+            }
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $raw))));
+    }
+
+    /**
+     * Odczytuje kod waluty zamówienia (unserialize order_currency_info, fallback PLN).
+     *
+     * @param   object  $orderFull  Full order object
+     *
+     * @return  string
+     *
+     * @since   2.2.0
+     */
+    private function getOrderCurrencyCode(object $orderFull): string
+    {
+        $orderCurrencyInfo = $orderFull->order_currency_info ?? null;
+
+        if ($orderCurrencyInfo && is_string($orderCurrencyInfo)) {
+            // HikaShop zapisuje tu czysty stdClass (classes/order.php) — ograniczenie
+            // klas przy unserialize zamyka wektor object injection z danych w bazie.
+            // instanceof zamiast isset(): na zablokowanym obiekcie (__PHP_Incomplete_Class)
+            // nawet isset() emitowałoby Warning.
+            $obj = unserialize($orderCurrencyInfo, ['allowed_classes' => ['stdClass']]);
+
+            if ($obj instanceof \stdClass && isset($obj->currency_code)) {
+                return (string) $obj->currency_code;
+            }
+        }
+
+        return 'PLN';
     }
 
     /**
@@ -1534,14 +1629,29 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         // przyszłego terminu; wcześniej sztywne +7 dni).
         $paymentDays = max(0, (int) $this->params->get('payment_days', 0));
 
+        // Data wystawienia. HikaShop ustawia order_invoice_created dopiero, gdy status
+        // trafia na listę invoice_order_statuses (domyślnie confirmed,shipped — patrz
+        // core classes/order.php). Przy wystawianiu dokumentu WCZEŚNIEJ (faktura przed
+        // zapłatą: status 'created'/'unpaid') pole jest jeszcze puste, a
+        // date('Y-m-d', 0) dawało 1970-01-01 — dokument powstawał, ale z datą sprzed lat
+        // (niewidoczny na liście bieżących faktur). Fallback: data złożenia zamówienia,
+        // ostatecznie „dziś".
+        $issueTimestamp = !empty($orderFull->order_invoice_created)
+            ? (int) $orderFull->order_invoice_created
+            : (!empty($orderFull->order_created) ? (int) $orderFull->order_created : time());
+
+        $sellTimestamp = !empty($orderFull->order_created)
+            ? (int) $orderFull->order_created
+            : $issueTimestamp;
+
         $payload = [
             'api_token' => $apiToken,
             'invoice'   => [
                 'kind'            => $invoiceKind,
                 'number'          => null,
-                'sell_date'       => date('Y-m-d', $orderFull->order_created),
-                'issue_date'      => date('Y-m-d', $orderFull->order_invoice_created),
-                'payment_to'      => date('Y-m-d', strtotime('+' . $paymentDays . ' days', $orderFull->order_invoice_created)),
+                'sell_date'       => date('Y-m-d', $sellTimestamp),
+                'issue_date'      => date('Y-m-d', $issueTimestamp),
+                'payment_to'      => date('Y-m-d', strtotime('+' . $paymentDays . ' days', $issueTimestamp)),
                 'seller_name'     => $sellerName,
                 'seller_tax_no'   => $sellerTaxNo,
                 'buyer_name'      => $billing->address_company ?: $billing->address_firstname . ' ' . $billing->address_lastname,
@@ -1860,6 +1970,82 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Odroczona rejestracja płatności: dokument wystawiono przy statusie nieopłaconym
+     * (stan 'done_unpaid'), a zamówienie właśnie przeszło na status opłacony —
+     * rejestrujemy płatność w Fakturowni. Atomowe przejście done_unpaid → done
+     * gwarantuje, że dwa równoległe wywołania nie zarejestrują płatności dwukrotnie.
+     *
+     * @param   object  $orderFull      Full order object
+     * @param   string  $currentStatus  Aktualny (opłacony) status zamówienia
+     * @param   string  $apiToken       API token
+     * @param   string  $subdomain      Subdomain
+     * @param   string  $logFile        Log file path
+     * @param   int     $debug          Debug mode flag
+     *
+     * @return  void
+     *
+     * @since   2.2.0
+     */
+    private function handleDeferredPayment(
+        object $orderFull,
+        string $currentStatus,
+        string $apiToken,
+        string $subdomain,
+        string $logFile,
+        int $debug
+    ): void {
+        $orderId = (int) $orderFull->order_id;
+
+        // Atomowe zaklepanie: tylko jeden proces przejdzie done_unpaid → done
+        try {
+            $db = Factory::getContainer()->get('DatabaseDriver');
+            $this->ensureLockTable($db);
+
+            $query = $db->getQuery(true)
+                ->update($db->quoteName('#__hikashop_fakturownia_invoices'))
+                ->set($db->quoteName('state') . ' = ' . $db->quote('done'))
+                ->set($db->quoteName('modified') . ' = ' . $db->quote(Factory::getDate()->toSql()))
+                ->where($db->quoteName('order_id') . ' = ' . $orderId)
+                ->where($db->quoteName('state') . ' = ' . $db->quote('done_unpaid'));
+            $db->setQuery($query);
+            $db->execute();
+
+            if ($db->getAffectedRows() !== 1) {
+                // Dokument już opłacony/w innym stanie — nic do zrobienia
+                if ($debug) {
+                    $this->log($logFile, "Zamówienie #{$orderId}: odroczona płatność pominięta — dokument nie czeka na płatność");
+                }
+
+                return;
+            }
+        } catch (\Exception $e) {
+            $this->log($logFile, "Zamówienie #{$orderId}: błąd zaklepania odroczonej płatności: " . $e->getMessage());
+
+            return;
+        }
+
+        $invoiceId = $this->getExistingInvoiceId($orderId) ?? 0;
+
+        $this->log($logFile, "Zamówienie #{$orderId}: status zmienił się na opłacony ('{$currentStatus}') — rejestruję odroczoną płatność dla dokumentu ID {$invoiceId}");
+
+        $payment       = is_object($orderFull->payment ?? null) ? $orderFull->payment : new \stdClass();
+        $customer      = is_object($orderFull->customer ?? null) ? $orderFull->customer : new \stdClass();
+        $currencyCode  = $this->getOrderCurrencyCode($orderFull);
+        $paymentMethod = $this->mapPaymentMethod($payment->payment_name ?? '');
+        $userEmail     = $customer->user_email ?? 'Brak danych';
+
+        // Data płatności = teraz (moment przejścia na status opłacony), nie data
+        // złożenia zamówienia — zamówienie zostało opłacone dopiero teraz.
+        $paymentDate = date('Y-m-d H:i:s');
+
+        // sendPayment sam loguje i powiadamia admina przy błędzie (dokument zostałby
+        // wtedy nieopłacony mimo stanu 'done' — widoczne w logu i historii zamówienia)
+        $this->sendPayment(HttpFactory::getHttp(), $apiToken, $subdomain, $currencyCode, $orderFull, new \stdClass(), new \stdClass(), $userEmail, 0, $invoiceId, $paymentMethod, $paymentDate, $logFile, $debug);
+
+        $this->notifyAdmin("Płatność zarejestrowana dla dokumentu (ID {$invoiceId}) po przejściu zamówienia #{$orderId} na status '{$currentStatus}'", $orderId, false);
+    }
+
+    /**
      * Wyświetla sekcję Fakturowni (stan dokumentu + przycisk „Wystaw ponownie")
      * pod listą produktów w widoku zamówienia w panelu administracyjnym HikaShop.
      * HikaShop odpala ten trigger w środku szablonu — wtyczki echo'ują HTML wprost.
@@ -1901,6 +2087,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             if (in_array($lockRow->state, ['corrected', 'notified'], true)) {
                 $statusText .= ' ' . Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_' . strtoupper($lockRow->state));
+            } elseif ($lockRow->state === 'done_unpaid') {
+                $statusText .= ' ' . Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_UNPAID');
             }
         } elseif ($lockRow && in_array($lockRow->state, ['error', 'correction_error'], true)) {
             $statusText = Text::_('PLG_HIKASHOP_FAKTUROWNIA_STATE_ERROR');

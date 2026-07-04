@@ -18,6 +18,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 - Opcjonalne automatyczne wysyłanie faktury e-mailem do klienta.
 - **Powiadomienie o konieczności korekty** przy anulowaniu/zwrocie zamówienia po wystawieniu dokumentu, z opcją automatycznego wystawienia korekty do zera.
 - **Przycisk „Wystaw ponownie"** w widoku zamówienia w panelu — wymusza ponowne wystawienie dokumentu (np. po poprawieniu danych i usunięciu błędnego dokumentu w Fakturowni).
+- **Płatność zależna od statusu zamówienia** — dokument wystawiony przy statusie opłaconym od razu ma płatność; wystawiony przed zapłatą (pobranie, przelew B2B) pozostaje nieopłacony, a płatność rejestruje się automatycznie, gdy zamówienie przejdzie na status opłacony.
 - **Konfigurowalny termin płatności** (domyślnie 0 dni — zamówienie jest już opłacone).
 - Stawki VAT wysyłki i kosztu płatności pobierane **z zamówienia HikaShop** (kategorie podatkowe metod wysyłki/płatności) — dokument odzwierciedla to, co klient faktycznie zapłacił.
 
@@ -40,6 +41,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **NIP sprzedawcy**
    - **Status wyzwalający** — przy jakim statusie zamówienia wystawić dokument (domyślnie `confirmed`; można podać kilka po przecinku, np. `confirmed,shipped`)
    - **Termin płatności (dni)** — data „Termin płatności" na dokumencie, liczona od wystawienia (domyślnie `0`, bo zamówienie przy statusie `confirmed` jest już opłacone)
+   - **Statusy opłacone** — które statusy oznaczają opłacone zamówienie (domyślnie `auto` — status z kolumny „confirmed" w HikaShop). Dokument wystawiony przy statusie opłaconym od razu ma płatność; wystawiony przy nieopłaconym pozostaje nieopłacony, a płatność dorejestruje się automatycznie po przejściu zamówienia na status opłacony
    - **Typ dokumentu:**
      - **Faktura VAT** — każde zamówienie dostaje fakturę,
      - **Auto** — paragon domyślnie, a faktura gdy klient poda NIP lub zaznaczy „Chcę fakturę VAT" (wymaga modułu paragony.pl).
@@ -93,7 +95,7 @@ W trybie **Faktura VAT** każde zamówienie otrzymuje fakturę, niezależnie od 
 2. Po zmianie statusu zamówienia na wyzwalający (domyślnie **confirmed**) wtyczka automatycznie:
    - tworzy lub aktualizuje klienta w Fakturowni,
    - wystawia fakturę VAT lub paragon,
-   - rejestruje płatność,
+   - rejestruje płatność (gdy status zamówienia jest na liście „Statusów opłaconych"; inaczej dokument czeka nieopłacony i płatność dorejestruje się przy przejściu na status opłacony),
    - opcjonalnie wysyła fakturę e-mailem,
    - dodaje produkty do katalogu Fakturowni.
 
@@ -129,6 +131,7 @@ Wtyczka rozpoznaje statusy po **kluczu** (namekey) z **HikaShop → System → S
 | Ustawienie wtyczki | Co robi | Domyślnie |
 |---|---|---|
 | Status wyzwalający wystawienie | przy tym statusie powstaje faktura/paragon | `confirmed` (zamówienie opłacone) |
+| Statusy opłacone | decydują, czy dokument dostaje płatność od razu, czy dopiero po przejściu zamówienia na taki status | `auto` — status z flagą „confirmed" w HikaShop |
 | Status(y) anulowania/zwrotu | przy tym statusie zamówienie z dokumentem wymaga korekty | `auto` — statusy z flagą „cancelled" w HikaShop |
 
 Pozostałe statusy (`created`, `pending`, `shipped` itd. oraz własne w rodzaju „w przygotowaniu", „oczekuje na odbiór") wtyczka po prostu ignoruje — nic nie wystawia i nie koryguje.
@@ -139,7 +142,13 @@ Przykłady z własnymi statusami:
 - **„Zwrot towaru"** — zaznacz mu w HikaShop kolumnę „cancelled", a tryb `auto` wykryje go bez zmian we wtyczce.
 - **„Oczekuje na odbiór"** — nic nie rób; status neutralny, wtyczka go ignoruje.
 
-> **Ważne:** do statusu wyzwalającego dopisuj **tylko statusy oznaczające opłacone zamówienie** — wtyczka wraz z fakturą od razu rejestruje w Fakturowni płatność. Status w rodzaju „wysłane za pobraniem" (płatność dopiero przy odbiorze) zarejestrowałby płatność, której jeszcze nie ma.
+> **Faktury przed zapłatą** (pobranie, przelew B2B): utwórz w HikaShop własny status oznaczający „czeka na płatność" (np. „Nie opłacone" z kluczem `unpaid`) i **dopisz jego klucz** do statusu wyzwalającego, np. `confirmed,unpaid`, oraz ustaw „Termin płatności (dni)" > 0. Dokument wystawi się dla tego statusu **nieopłacony**, a wtyczka **sama dorejestruje płatność**, gdy zamówienie przejdzie na status z listy „Statusów opłaconych" (np. `confirmed`).
+>
+> **Status wbudowany `pending` zamiast własnego:** HikaShop instaluje domyślnie status `pending` (widoczny np. jako „oczekuje na potwierdzenie") — możesz użyć go zamiast tworzenia własnego, np. `confirmed,pending` w statusie wyzwalającym. Dla wtyczki to bez różnicy — dopasowuje po kluczu, niezależnie czy status jest wbudowany, czy własny.
+>
+> Jest jednak różnica **po stronie samego HikaShop, nie wtyczki**: przycisk „Zapłać" przy zamówieniu (i możliwość samodzielnego anulowania go przez klienta) pokazuje się tylko dla statusów z zaznaczoną kolumną **„Nie zapłacone"** w System → Statusy zamówień. Domyślnie ma ją zaznaczoną wyłącznie `created` — status `pending` **nie ma** jej zaznaczonej z instalacji, więc klient nie zobaczy przycisku „Zapłać" dla zamówienia w tym statusie, dopóki sam nie zaznaczysz mu tej flagi. Jeśli zamiast tego stworzysz własny status (jak „Nie opłacone" powyżej) i zaznaczysz mu tę kolumnę ręcznie, klient dostanie przycisk „Zapłać" od razu. Wybór między `pending` a własnym statusem sprowadza się więc do tego, czy klient ma móc dopłacić online samodzielnie.
+>
+> Nie wpisuj tu statusu `created` ani nie opieraj się na kolumnie „Unpaid" HikaShopa — `created` to każde świeżo złożone zamówienie (dokument powstawałby dla każdego koszyka), a ta kolumna steruje w HikaShop przyciskiem „Zapłać" i anulowaniem zamówienia na froncie. Wskaż **osobny, własny status**, na który przełączasz zamówienia do rozliczenia po fakcie.
 
 ---
 
