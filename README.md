@@ -199,7 +199,7 @@ Gałąź **`release`** jest oddzielona od `main` — `main` to bieżąca praca/r
 ### Jak opublikować nową wersję
 
 1. Praca i testy na `main`.
-2. Podbij numer `<version>` w `fakturownia.xml`, zacommituj.
+2. Podbij numer `<version>` w `fakturownia.xml`, zaktualizuj `<creationDate>` na datę wydania (Joomla NIE robi tego automatycznie — pole w Extensions → Manage → Manage pokazuje dosłownie to, co jest w XML) oraz numer w `PLG_HIKASHOP_FAKTUROWNIA_CREDIT_LABEL` w obu `language/*/plg_hikashop_fakturownia.ini` (notka w panelu admina), zacommituj.
 3. Zbuduj paczkę instalacyjną (zip zawierający pliki z sekcji `<files>` manifestu: `fakturownia.php`, `index.html`, `language/`, `services/`, `src/`, oraz sam `fakturownia.xml` i `script.php`) — **ścieżki w zipie muszą używać `/`, nie `\`** (typowy błąd przy budowaniu zipa w Windows/PowerShell `Compress-Archive` — Joomla odrzuci taki plik komunikatem „Nie udało się rozpakować pliku”).
 4. Utwórz **GitHub Release** z tagiem `vX.Y.Z` i załącz zip jako asset.
 5. Na gałęzi `release` zaktualizuj `updates.xml`: nowa `<version>`, `<downloadurl>` wskazujący na asset z Release, opcjonalnie `<sha256>` (suma kontrolna paczki — Joomla zweryfikuje integralność pobranego pliku).
