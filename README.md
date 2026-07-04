@@ -184,6 +184,32 @@ Kluczowe zdarzenia cyklu życia (start, wybór typu dokumentu, wynik) zapisywane
 
 ---
 
+## Aktualizacje
+
+Wtyczka ma wbudowany mechanizm aktualizacji przez Joomla — **Extensions → Manage → Update** → przycisk „Znajdź aktualizacje” pokaże nową wersję, gdy zostanie opublikowana, i pozwoli zainstalować ją jednym kliknięciem (bez ręcznego wgrywania zipa).
+
+Mechanizm działa w oparciu o standardowy update server Joomla (`<updateservers>` w `fakturownia.xml`), który wskazuje na plik manifestu hostowany w tym repozytorium na GitHubie:
+
+```text
+https://raw.githubusercontent.com/pablop76/plg_fakturownia/release/updates.xml
+```
+
+Gałąź **`release`** jest oddzielona od `main` — `main` to bieżąca praca/rozwój, `release` trzyma wyłącznie przetestowany, opublikowany stan (`updates.xml` + odnośniki do paczek na GitHub Releases). Nic nie trafia tam automatycznie.
+
+### Jak opublikować nową wersję
+
+1. Praca i testy na `main`.
+2. Podbij numer `<version>` w `fakturownia.xml`, zacommituj.
+3. Zbuduj paczkę instalacyjną (zip zawierający pliki z sekcji `<files>` manifestu: `fakturownia.php`, `index.html`, `language/`, `services/`, `src/`, oraz sam `fakturownia.xml` i `script.php`) — **ścieżki w zipie muszą używać `/`, nie `\`** (typowy błąd przy budowaniu zipa w Windows/PowerShell `Compress-Archive` — Joomla odrzuci taki plik komunikatem „Nie udało się rozpakować pliku”).
+4. Utwórz **GitHub Release** z tagiem `vX.Y.Z` i załącz zip jako asset.
+5. Na gałęzi `release` zaktualizuj `updates.xml`: nowa `<version>`, `<downloadurl>` wskazujący na asset z Release, opcjonalnie `<sha256>` (suma kontrolna paczki — Joomla zweryfikuje integralność pobranego pliku).
+6. Commit + push na `release`.
+7. W Joomla: Extensions → Manage → Update → „Znajdź aktualizacje” wykryje nową wersję (może być potrzebna chwila na propagację cache CDN GitHuba, zwykle do kilku minut).
+
+> Joomla pokazuje aktualizację tylko wtedy, gdy wersja w `updates.xml` jest **wyższa** niż aktualnie zainstalowana — samo dodanie mechanizmu (bez podbicia wersji) niczego nie pokaże.
+
+---
+
 ## Uwagi
 - Wersja HikaShop Starter nie sprawdza, czy kupon ma pokrycie w towarze. Może to powodować różnice w obliczeniach.
 - Przy odinstalowaniu wtyczki dane (kolumny, wpisy) nie są usuwane.
