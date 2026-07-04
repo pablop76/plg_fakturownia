@@ -25,7 +25,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 ---
 
 ## Wymagania
-- Joomla 5.0+
+- Joomla 5.0+ (działa też na 6.x)
 - PHP 8.1+
 - HikaShop (zainstalowany przed instalacją wtyczki)
 - Konto w serwisie Fakturownia.pl
