@@ -156,6 +156,16 @@
                     <option value="1">JYES</option>
                 </field>
             </fieldset>
+
+            <fieldset name="about" label="PLG_HIKASHOP_FAKTUROWNIA_FIELDSET_ABOUT">
+                <field
+                    name="fakturownia_credit"
+                    type="note"
+                    heading="h4"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_CREDIT_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_CREDIT_DESC"
+                />
+            </fieldset>
         </fields>
     </config>
 
