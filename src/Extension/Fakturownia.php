@@ -37,14 +37,6 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     /**
-     * Zabezpieczenie przed wielokrotnym wykonaniem
-     *
-     * @var    array
-     * @since  2.0.0
-     */
-    private array $processedOrders = [];
-
-    /**
      * Czy tabela blokad została już sprawdzona w tym żądaniu
      *
      * @var    boolean
@@ -109,12 +101,6 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         $orderId = (int) $order->order_id;
-
-        // Zabezpieczenie przed wielokrotnym wykonaniem dla tego samego zamówienia
-        if (in_array($orderId, $this->processedOrders)) {
-            return;
-        }
-        $this->processedOrders[] = $orderId;
 
         $logFile    = $this->getLogFile();
         $debugOrder = (int) $this->params->get('debug_order', 0);
