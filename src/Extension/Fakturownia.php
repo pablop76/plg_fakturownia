@@ -1453,50 +1453,36 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         // Dołóż zagregowane pozycje do listy wynikowej
         $positions = array_merge($positions, array_values($aggregated));
 
-        // Dodaj pozycje wysyłki (tylko jeśli cena > 0)
-        foreach ($shippings as $ship) {
-            if (!is_object($ship)) {
-                continue;
-            }
+        // Pozycja wysyłki — KWOTA Z ZAMÓWIENIA (order_shipping_price/order_shipping_tax),
+        // nie z konfiguracji metody wysyłki ($ship->shipping_price to tylko cena bazowa/
+        // domyślna). Niektóre metody liczą cenę dynamicznie (np. InPost Paczkomaty wg API
+        // rozmiaru paczki) — order_full_price klienta odzwierciedla realnie naliczoną kwotę,
+        // która może różnić się od ceny bazowej metody (potwierdzone w core order.php:809,827:
+        // order_shipping_price += shipping_price_with_tax, order_shipping_tax = brutto-netto —
+        // identyczna konwencja jak order_payment_price/order_payment_tax). $shippings służy
+        // tu tylko do etykiety (nazwa metody), nie do ceny.
+        $shippingFeeGross = isset($orderFull->order_shipping_price) ? (float) $orderFull->order_shipping_price : 0.0;
 
-            $priceNet = (float) ($ship->shipping_price ?? 0);
-            
-            // Pomijaj wysyłkę z ceną 0
-            if ($priceNet <= 0) {
-                continue;
-            }
+        if ($shippingFeeGross > 0) {
+            $shippingFeeTax  = isset($orderFull->order_shipping_tax) ? (float) $orderFull->order_shipping_tax : 0.0;
+            $shippingFeeNet  = $shippingFeeGross - $shippingFeeTax;
+            $shippingTaxRate = $shippingFeeNet > 0 ? round(($shippingFeeTax / $shippingFeeNet) * 100, 2) : 0.0;
 
-            // Some HikaShop payloads don't provide order_shipping_tax.
-            // Prefer tax info when available, otherwise fall back to 0%.
-            if (isset($ship->order_shipping_tax)) {
-                $taxRate = (float) $ship->order_shipping_tax;
-            } elseif (!empty($ship->shipping_tax_info)) {
-                $taxInfos = (array) $ship->shipping_tax_info;
-                $firstTax = reset($taxInfos);
+            $shippingNames = [];
 
-                if (is_object($firstTax)) {
-                    $firstTax = (array) $firstTax;
+            foreach ($shippings as $ship) {
+                if (is_object($ship) && !empty($ship->shipping_name)) {
+                    $shippingNames[] = $ship->shipping_name;
                 }
-
-                if (isset($firstTax['tax_rate'])) {
-                    $taxRate = (float) $firstTax['tax_rate'] * 100;
-                } else {
-                    $taxRate = 0.0;
-                }
-            } elseif (isset($ship->shipping_tax)) {
-                $val     = (float) $ship->shipping_tax;
-                $taxRate = ($val > 0 && $val <= 1) ? ($val * 100) : $val;
-            } else {
-                $taxRate = 0.0;
             }
 
-            $priceGross = $priceNet * (1 + $taxRate / 100);
+            $shippingLabel = !empty($shippingNames) ? implode(', ', array_unique($shippingNames)) : 'Wysyłka';
 
             $positions[] = [
-                'name'              => 'Wysyłka: ' . $ship->shipping_name,
+                'name'              => 'Wysyłka: ' . $shippingLabel,
                 'quantity'          => 1,
-                'tax'               => $taxRate,
-                'total_price_gross' => round($priceGross, 2),
+                'tax'               => $shippingTaxRate,
+                'total_price_gross' => round($shippingFeeGross, 2),
             ];
         }
 
