@@ -42,15 +42,15 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
    - **Status wyzwalający** — przy jakim statusie zamówienia wystawić dokument (domyślnie `confirmed`; można podać kilka po przecinku, np. `confirmed,shipped`)
    - **Termin płatności (dni)** — data „Termin płatności" na dokumencie, liczona od wystawienia (domyślnie `0`, bo zamówienie przy statusie `confirmed` jest już opłacone)
    - **Statusy opłacone** — które statusy oznaczają opłacone zamówienie (domyślnie `auto` — status z kolumny „confirmed" w HikaShop). Dokument wystawiony przy statusie opłaconym od razu ma płatność; wystawiony przy nieopłaconym pozostaje nieopłacony, a płatność dorejestruje się automatycznie po przejściu zamówienia na status opłacony
-   - **Typ dokumentu:**
+   - **Typ dokumentu Fakturowni:**
      - **Faktura VAT** — każde zamówienie dostaje fakturę,
-     - **Auto** — paragon domyślnie, a faktura gdy klient poda NIP lub zaznaczy „Chcę fakturę VAT" (wymaga modułu paragony.pl).
+     - **Paragon domyślnie, a faktura gdy klient poda NIP lub sam zaznaczy fakturę** — klient bez NIP-u dostaje paragon, a fakturę, gdy poda NIP lub zaznaczy „Chcę otrzymać fakturę VAT" (wymaga modułu paragony.pl).
    - **Automatycznie wysyłaj fakturę e-mailem** — po wystawieniu faktura zostanie wysłana na adres e-mail klienta z poziomu Fakturowni. Przy aktywnym KSeF fakturę dla firmy Fakturownia wyśle dopiero po nadaniu numeru KSeF — gdy odmówi, w historii zamówienia pojawi się informacja, żeby wysłać ją z Fakturowni.
    - **Katalog produktów w Fakturowni** — kto zapisuje produkty z zamówień w katalogu produktów Fakturowni. Na samą fakturę nie ma to wpływu: nazwy, ceny i stawki VAT pozycji zawsze pochodzą z zamówienia.
      - **Prowadzi wtyczka** (domyślnie): przed wystawieniem faktury wtyczka szuka produktu w katalogu po kodzie z HikaShopa, a gdy go nie znajdzie, po nazwie. Brakujący produkt dodaje, a znalezionemu uaktualnia kod, nazwę, cenę netto i stawkę VAT. Pozycja faktury dostaje odnośnik do produktu (`product_id`), więc Fakturownia nie tworzy drugiego wpisu. Każdy produkt to od 1 do 3 dodatkowych żądań w trakcie zapisu zamówienia, więc przy dużym koszyku klient dłużej czeka na potwierdzenie.
      - **Prowadzi Fakturownia**: wtyczka nie wysyła nic do katalogu. Fakturownia sama dopisuje do niego pozycje wystawionych faktur i rozpoznaje je po nazwie. Wpisy nie mają kodów z HikaShopa, a produkt po zmianie nazwy trafia do katalogu jako nowy.
      - W obu trybach wysyłkę i koszt płatności (np. „Wysyłka: InPost Paczkomaty 24/7”) dopisuje do katalogu sama Fakturownia.
-3. **(Tylko w trybie Auto) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. W ustawieniach wtyczki wystarczy kliknąć **„Utwórz pole w HikaShopie”**. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
+3. **(Tylko przy typie „Paragon domyślnie…”) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. W ustawieniach wtyczki wystarczy kliknąć **„Utwórz pole w HikaShopie”**. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
 
    > **Uwaga:** Paragony wymagają modułu paragony.pl zainstalowanego w serwisie Fakturownia.pl.
 
@@ -58,9 +58,9 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 
 ## Pole „Chcę otrzymać fakturę VAT"
 
-Pole pozwala klientowi **bez NIP-u** poprosić o fakturę VAT. Bez niego faktura i tak wystawia się, gdy klient poda NIP. Ma znaczenie tylko w trybie **Auto** — w trybie **Faktura VAT** każde zamówienie i tak dostaje fakturę, więc pole tylko myliłoby klientów.
+Pole pozwala klientowi **bez NIP-u** poprosić o fakturę VAT. Bez niego faktura i tak wystawia się, gdy klient poda NIP. Ma znaczenie tylko przy typie dokumentu **„Paragon domyślnie, a faktura gdy klient poda NIP lub sam zaznaczy fakturę”** — przy typie **„Faktura VAT”** każde zamówienie i tak dostaje fakturę, więc pole tylko myliłoby klientów.
 
-**Od wersji 2.3.3 pole tworzy wtyczka.** W ustawieniach wtyczki, po wybraniu trybu **Auto** i zapisaniu ustawień, pod typem dokumentu widać stan pola. Jeśli pola nie ma, przycisk **„Utwórz pole w HikaShopie”** zakłada je funkcją HikaShopa (tą samą, której używa jego panel): w adresie płatności, jako pole do zaznaczenia, opublikowane i widoczne w sklepie. Istniejącego pola wtyczka nie zmienia. Wygląd i treść zmienisz później w HikaShop → Wyświetlanie → Pola użytkownika.
+**Od wersji 2.3.3 pole tworzy wtyczka.** W ustawieniach wtyczki, po wybraniu w polu **„Typ dokumentu Fakturowni”** opcji **„Paragon domyślnie, a faktura gdy klient poda NIP lub sam zaznaczy fakturę”** i zapisaniu ustawień, pod tym polem widać stan pola. Jeśli pola nie ma, przycisk **„Utwórz pole w HikaShopie”** zakłada je funkcją HikaShopa (tą samą, której używa jego panel): w adresie płatności, jako pole do zaznaczenia, opublikowane i widoczne w sklepie. Istniejącego pola wtyczka nie zmienia. Wygląd i treść zmienisz później w HikaShop → Wyświetlanie → Pola użytkownika.
 
 Gdyby przycisk zgłosił błąd, pole można utworzyć **ręcznie** w HikaShop: **Wyświetlanie → Pola użytkownika → Utwórz**, i ustawić tak:
 
@@ -85,7 +85,7 @@ Zapisz. Checkbox pojawi się w adresie rozliczeniowym na checkoutcie — zaznacz
 
 ---
 
-## Jak ustalany jest typ dokumentu (tryb Auto)
+## Jak ustalany jest typ dokumentu (typ „Paragon domyślnie…”)
 
 | Sytuacja | Dokument |
 |---|---|
@@ -94,7 +94,7 @@ Zapisz. Checkbox pojawi się w adresie rozliczeniowym na checkoutcie — zaznacz
 | Klient poda błędny NIP | faktura VAT bez NIP |
 | Brak NIP i brak zaznaczenia | paragon |
 
-W trybie **Faktura VAT** każde zamówienie otrzymuje fakturę, niezależnie od powyższego.
+Przy typie **„Faktura VAT”** każde zamówienie otrzymuje fakturę, niezależnie od powyższego.
 
 ---
 
