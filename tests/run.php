@@ -860,6 +860,27 @@ t('S7b', 'Synchronizacja katalogu: niezmieniony produkt nie jest wysyłany ponow
     check($s->countRequests('PUT', '/products/{id}.json') === 0, 'zbędnych aktualizacji: ' . $s->countRequests('PUT', '/products/{id}.json'));
 });
 
+t('S7c', 'Katalog prowadzi wtyczka: wpis bez kodu (dodany przez Fakturownię) znaleziony po nazwie, kod dopisany, pozycja z product_id, katalog przed fakturą', function () {
+    [$p, $s] = env(['sync_products' => 1]);
+    $name    = 'Zestaw L<span class="hikashop_product_variant_subname">: Półsłodkie, Czarne pudełko</span>';
+    $s->products[500] = ['id' => 500, 'name' => 'Zestaw L: Półsłodkie, Czarne pudełko', 'code' => null, 'price_net' => 1, 'tax' => 23];
+    order(['products' => [product($name, 1, 100.00, 0.23, ['order_product_code' => 'Zestaw L_25_303'])], 'order_full_price' => 123.00]);
+    fire($p);
+    $routes = array_map(fn ($r) => $r['method'] . ' ' . $r['route'], $s->requests);
+    check($s->countRequests('POST', '/products.json') === 0, 'nowych wpisów w katalogu: ' . $s->countRequests('POST', '/products.json'));
+    check(($s->products[500]['code'] ?? '') === 'Zestaw L_25_303', 'kod wpisu: ' . json_encode($s->products[500]['code'] ?? null));
+    check((invoices($s)[0]['positions'][0]['product_id'] ?? null) === 500, 'product_id pozycji: ' . json_encode(invoices($s)[0]['positions'][0]['product_id'] ?? null));
+    check(array_search('PUT /products/{id}.json', $routes) < array_search('POST /invoices.json', $routes), 'kolejność: ' . implode(', ', $routes));
+});
+
+t('S7d', 'Katalog prowadzi Fakturownia: zero żądań do katalogu, pozycje bez product_id', function () {
+    [$p, $s] = env(['sync_products' => 0]);
+    order([]);
+    fire($p);
+    check(count(array_filter($s->requests, fn ($r) => str_starts_with($r['route'], '/products'))) === 0, 'żądań do katalogu: ' . count(array_filter($s->requests, fn ($r) => str_starts_with($r['route'], '/products'))));
+    check(!isset(invoices($s)[0]['positions'][0]['product_id']), 'product_id w pozycji');
+});
+
 // =========================================================================================
 // Nowe w 2.3.0
 // =========================================================================================

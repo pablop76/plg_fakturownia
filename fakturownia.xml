@@ -2,7 +2,7 @@
 <extension type="plugin" version="5.0" method="upgrade" group="hikashop">
     <name>PLG_HIKASHOP_FAKTUROWNIA</name>
     <creationDate>2026-11-23</creationDate>
-    <version>2.3.0</version>
+    <version>2.3.1</version>
     <author>Paweł Półtoraczyk</author>
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
@@ -105,8 +105,8 @@
                     default="1"
                     label="PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_DESC">
-                    <option value="1">Tak</option>
-                    <option value="0">Nie</option>
+                    <option value="1">PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_PLUGIN</option>
+                    <option value="0">PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_FAKTUROWNIA</option>
                 </field>
             </fieldset>
 

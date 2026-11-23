@@ -46,7 +46,10 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
      - **Faktura VAT** — każde zamówienie dostaje fakturę,
      - **Auto** — paragon domyślnie, a faktura gdy klient poda NIP lub zaznaczy „Chcę fakturę VAT" (wymaga modułu paragony.pl).
    - **Automatycznie wysyłaj fakturę e-mailem** — po wystawieniu faktura zostanie wysłana na adres e-mail klienta z poziomu Fakturowni. Przy aktywnym KSeF fakturę dla firmy Fakturownia wyśle dopiero po nadaniu numeru KSeF — gdy odmówi, w historii zamówienia pojawi się informacja, żeby wysłać ją z Fakturowni.
-   - **Synchronizuj katalog produktów** (domyślnie włączone) — produkty z zamówienia trafiają do katalogu produktów Fakturowni. Faktura tego nie wymaga, a każdy produkt to dodatkowe żądanie w trakcie zapisu zamówienia — wyłącz, jeśli nie korzystasz z katalogu.
+   - **Katalog produktów w Fakturowni** — kto zapisuje produkty z zamówień w katalogu produktów Fakturowni. Na samą fakturę nie ma to wpływu: nazwy, ceny i stawki VAT pozycji zawsze pochodzą z zamówienia.
+     - **Prowadzi wtyczka** (domyślnie): przed wystawieniem faktury wtyczka szuka produktu w katalogu po kodzie z HikaShopa, a gdy go nie znajdzie, po nazwie. Brakujący produkt dodaje, a znalezionemu uaktualnia kod, nazwę, cenę netto i stawkę VAT. Pozycja faktury dostaje odnośnik do produktu (`product_id`), więc Fakturownia nie tworzy drugiego wpisu. Każdy produkt to od 1 do 3 dodatkowych żądań w trakcie zapisu zamówienia, więc przy dużym koszyku klient dłużej czeka na potwierdzenie.
+     - **Prowadzi Fakturownia**: wtyczka nie wysyła nic do katalogu. Fakturownia sama dopisuje do niego pozycje wystawionych faktur i rozpoznaje je po nazwie. Wpisy nie mają kodów z HikaShopa, a produkt po zmianie nazwy trafia do katalogu jako nowy.
+     - W obu trybach wysyłkę i koszt płatności (np. „Wysyłka: InPost Paczkomaty 24/7”) dopisuje do katalogu sama Fakturownia.
 3. **(Opcjonalnie) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
 
    > **Uwaga:** Paragony wymagają modułu paragony.pl zainstalowanego w serwisie Fakturownia.pl.
@@ -97,7 +100,7 @@ W trybie **Faktura VAT** każde zamówienie otrzymuje fakturę, niezależnie od 
    - wystawia fakturę VAT lub paragon z danymi nabywcy (kartę klienta Fakturownia dopasowuje lub zakłada sama),
    - rejestruje płatność (gdy status zamówienia jest na liście „Statusów opłaconych"; inaczej dokument czeka nieopłacony i płatność dorejestruje się przy przejściu na status opłacony),
    - opcjonalnie wysyła fakturę e-mailem,
-   - opcjonalnie dodaje produkty do katalogu Fakturowni.
+   - w trybie „Prowadzi wtyczka” przed wystawieniem dokumentu dodaje lub uaktualnia produkty w katalogu Fakturowni.
 
 Każde żądanie do API ma limit czasu (20 s), a token API jest przekazywany w nagłówku `Authorization` (zalecenie Fakturowni od listopada 2026). Kwoty pozycji pochodzą wprost z zamówienia HikaShop (cena i podatek jednostkowy policzone przez HikaShop), więc suma dokumentu zgadza się z kwotą zapłaconą przez klienta także przy włączonej w HikaShopie opcji zaokrąglania obliczeń.
 

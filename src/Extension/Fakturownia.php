@@ -316,7 +316,20 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             // 1. Buduje pozycje faktury. Klienta NIE zakładamy osobnymi żądaniami: Fakturownia
             // sama dopasowuje nabywcę do karty klienta albo ją tworzy (README API, „Klient:
             // nowy lub istniejący"), a dane nabywcy idą wprost na fakturę (sendInvoice).
-            $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentFeeGross, $paymentFeeVat, $couponCode, $couponValue);
+            // Katalog prowadzi wtyczka (sync_products=1): produkt zapisujemy PRZED fakturą, a pozycja
+            // dostaje jego product_id. Fakturownia dopisuje pozycje faktur do katalogu sama, z opóźnieniem,
+            // więc zapis po fakturze nie widział jej wpisu i tworzył drugi (duplikat).
+            $catalogIds = [];
+
+            if ($this->params->get('sync_products', 1)) {
+                foreach ($products as $product) {
+                    if (is_object($product) && ($catalogId = $this->addOrUpdateProductToFakturownia($http, $apiToken, $subdomain, $product, $debug))) {
+                        $catalogIds[$product->order_product_id ?? ''] = $catalogId;
+                    }
+                }
+            }
+
+            $positions = $this->buildPositions($orderFull, $products, $shippings, $paymentName, $paymentFeeGross, $paymentFeeVat, $couponCode, $couponValue, $catalogIds);
 
             // Kod kuponu nie jest już osobną pozycją (patrz buildPositions) — opcjonalnie
             // dopisujemy go razem z kwotą do pola 'Uwagi' dokumentu, żeby nie znikła informacja,
@@ -369,16 +382,6 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                     $this->sendPayment($http, $apiToken, $subdomain, $currencyCode, $orderFull, (int) $invoiceId, $paymentMethod, $paymentDate, $debug);
                 } else {
                     $this->log("Zamówienie #{$orderId}: status '{$currentStatus}' nie jest statusem opłaconym — dokument wystawiony BEZ płatności (zarejestruje się przy przejściu na status opłacony)");
-                }
-
-                // 5. Katalog produktów w Fakturowni (opcjonalny — każdy produkt to dodatkowe
-                // żądania w trakcie zapisu zamówienia, a faktura katalogu nie potrzebuje)
-                if ($this->params->get('sync_products', 1)) {
-                    foreach ($products as $product) {
-                        if (is_object($product)) {
-                            $this->addOrUpdateProductToFakturownia($http, $apiToken, $subdomain, $product, $debug);
-                        }
-                    }
                 }
 
                 $this->log("Zamówienie #{$orderId}: ZAKOŃCZONO — Invoice ID: {$invoiceId}");
@@ -1304,6 +1307,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      * @param   float   $paymentFeeVat    Stawka VAT kosztu płatności w %, wyliczona z zamówienia
      * @param   string  $couponCode       Coupon code
      * @param   float   $couponValue      Coupon value
+     * @param   array   $catalogIds       order_product_id => ID produktu w katalogu Fakturowni
      *
      * @return  array
      *
@@ -1317,7 +1321,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         float $paymentFeeGross,
         float $paymentFeeVat,
         string $couponCode,
-        float $couponValue
+        float $couponValue,
+        array $catalogIds = []
     ): array {
         $positions   = [];
         $aggregated  = [];
@@ -1368,6 +1373,10 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 'tax'               => $taxPercent,
                 'total_price_gross' => round($priceGross * $qty, 2),
             ];
+
+            if (isset($catalogIds[$product->order_product_id ?? ''])) {
+                $position['product_id'] = $catalogIds[$product->order_product_id ?? ''];
+            }
 
             // Rabat NIE jest dodawany osobno — order_product_price już go uwzględnia (patrz wyżej),
             // więc dodatkowe pole 'discount' byłoby podwójnym odjęciem tej samej kwoty.
@@ -2136,7 +2145,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
      * @param   object  $product    Product object
      * @param   int     $debug      Debug mode flag
      *
-     * @return  void
+     * @return  int|null  ID produktu w katalogu (do product_id pozycji) albo null przy błędzie
      *
      * @since   2.0.0
      */
@@ -2146,7 +2155,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         string $subdomain,
         object $product,
         int $debug
-    ): void {
+    ): ?int {
         // Pobierz stawkę VAT
         $taxRate = 23; // Domyślna
 
@@ -2174,7 +2183,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             $productCode = 'order_' . $product->order_id . '_prod_' . $product->order_product_id;
         }
 
-        $productName = strip_tags($product->order_product_name);
+        $productName = $this->positionName((string) $product->order_product_name);  // ta sama nazwa co w pozycji faktury
         $priceNet    = (float) $product->order_product_price;
 
         $payload = [
@@ -2187,38 +2196,25 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         ];
 
         try {
-            // Pobierz listę produktów z filtrem search
-            $searchResponse = $this->api($http, $apiToken, $subdomain, 'GET', '/products.json?search=' . urlencode($productCode));
-            $productsList   = json_decode((string) $searchResponse->body, true);
-
-            if ($debug) {
-                $this->log("Szukam produktu code={$productCode}, znaleziono: " . (is_array($productsList) ? count($productsList) : 0), 'debug');
-            }
-
-            // Znajdź produkt po code (dokładne dopasowanie)
+            // Szukamy po kodzie, a gdy go nie ma — po nazwie: produkt bez naszego kodu (dodany przez
+            // Fakturownię z pozycji faktury, ręcznie albo przed ujednoliceniem kodów) dostaje kod przez
+            // PUT niżej, więc kolejne wyszukiwania trafiają już po kodzie. Filtruje parametr `query`
+            // (kod i nazwa, fragment, bez wielkości liter); `search` API ignoruje i zwraca 1. stronę
+            // całego katalogu — przy większym katalogu produkt „znikał” i co zamówienie powstawał nowy.
             $found = null;
 
-            if (is_array($productsList)) {
-                foreach ($productsList as $p) {
-                    // Porównanie bez uwzględnienia wielkości liter i ze trim
-                    if (isset($p['code']) && strtolower(trim($p['code'])) === strtolower(trim($productCode))) {
-                        $found = $p;
-                        break;
-                    }
+            foreach (['code' => $productCode, 'name' => $productName] as $field => $value) {
+                $response = $this->api($http, $apiToken, $subdomain, 'GET', '/products.json?per_page=100&query=' . urlencode($value));
+                $list     = json_decode((string) $response->body, true);
+
+                if ($debug) {
+                    $this->log("Szukam produktu {$field}={$value}, wyników: " . (is_array($list) ? count($list) : 0), 'debug');
                 }
 
-                // Fallback: wyszukiwanie Fakturowni (search=) jest rozmyte i dopasowuje też po
-                // nazwie, więc mogło zwrócić produkt "osierocony" — bez naszego stabilnego kodu
-                // (utworzony ręcznie albo przed ujednoliceniem kodów). Bez tego fallbacku taki
-                // produkt nie łapał się na dokładne dopasowanie kodu i tworzył się duplikat.
-                // Dopasowanie po nazwie + PUT poniżej nadpisuje mu kod — kolejne wyszukiwania
-                // trafią już bezpośrednio po kodzie (samonaprawiająca się zbieżność).
-                if ($found === null) {
-                    foreach ($productsList as $p) {
-                        if (isset($p['name']) && strtolower(trim($p['name'])) === strtolower(trim($productName))) {
-                            $found = $p;
-                            break;
-                        }
+                foreach (is_array($list) ? $list : [] as $p) {
+                    if (is_array($p) && mb_strtolower(trim((string) ($p[$field] ?? ''))) === mb_strtolower(trim($value))) {
+                        $found = $p;
+                        break 2;
                     }
                 }
             }
@@ -2234,7 +2230,7 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                         $this->log("Produkt ID={$found['id']} bez zmian — pominięto aktualizację", 'debug');
                     }
 
-                    return;
+                    return (int) $found['id'];
                 }
 
                 $this->api($http, $apiToken, $subdomain, 'PUT', '/products/' . (int) $found['id'] . '.json', $payload);
@@ -2242,18 +2238,25 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
                 if ($debug) {
                     $this->log("Zaktualizowano produkt ID {$found['id']}", 'debug');
                 }
-            } else {
-                $this->api($http, $apiToken, $subdomain, 'POST', '/products.json', $payload);
 
-                if ($debug) {
-                    $this->log("Dodano nowy produkt {$productCode}", 'debug');
-                }
+                return (int) $found['id'];
             }
-        } catch (\Exception $e) {
+
+            $response = $this->api($http, $apiToken, $subdomain, 'POST', '/products.json', $payload);
+            $newId    = (int) (json_decode((string) $response->body, true)['id'] ?? 0);
+
+            if ($debug) {
+                $this->log("Dodano nowy produkt {$productCode} (HTTP {$response->code}, ID {$newId})", 'debug');
+            }
+
+            return $response->code < 300 && $newId > 0 ? $newId : null;
+        } catch (\Throwable $e) {
             if ($debug) {
                 $this->log("Wyjątek API product: " . $e->getMessage(), 'debug');
             }
-            // Nie rzucamy wyjątku - produkt jest drugorzędny
+
+            // Nie rzucamy wyjątku — bez katalogu faktura i tak powstanie (pozycja bez product_id)
+            return null;
         }
     }
 

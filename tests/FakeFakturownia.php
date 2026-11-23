@@ -156,7 +156,8 @@ final class FakeFakturownia
                 return $this->json(200, ['status' => 'ok']);
 
             case 'GET /products.json':
-                $s = mb_strtolower((string) ($query['search'] ?? ''));
+                // Jak żywe API (sprawdzone 23.11.2026): filtruje `query` (fragment kodu lub nazwy), `search` ignoruje
+                $s = mb_strtolower((string) ($query['query'] ?? ''));
 
                 return $this->json(200, array_values(array_filter($this->products, fn ($p) => $s === ''
                     || str_contains(mb_strtolower((string) ($p['code'] ?? '')), $s)
