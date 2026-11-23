@@ -1394,7 +1394,9 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         // Dołóż zagregowane pozycje do listy wynikowej
-        $positions = array_merge($positions, array_values($aggregated));
+        $positions     = array_merge($positions, array_values($aggregated));
+        $productCount  = count($positions);
+        $shippingIndex = null;
 
         // Pozycja wysyłki — KWOTA Z ZAMÓWIENIA (order_shipping_price/order_shipping_tax),
         // nie z konfiguracji metody wysyłki ($ship->shipping_price to tylko cena bazowa/
@@ -1421,7 +1423,8 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
             $shippingLabel = !empty($shippingNames) ? implode(', ', array_unique($shippingNames)) : 'Wysyłka';
 
-            $positions[] = [
+            $shippingIndex = count($positions);
+            $positions[]   = [
                 'name'              => $this->positionName('Wysyłka: ' . $shippingLabel),
                 'quantity'          => 1,
                 'tax'               => $shippingTaxRate,
@@ -1448,37 +1451,99 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         // to wymóg protokołu fiskalnego: rabat to osobny typ operacji, a nie sprzedaż towaru za
         // ujemną kwotę. Zgodnie z API Fakturowni rabat trzeba rozłożyć jako pole 'discount'
         // (kwotowo) na już istniejących pozycjach — Fakturownia sama odejmuje tę kwotę od
-        // total_price_gross przy wyliczaniu dokumentu. Rozkładamy proporcjonalnie do wartości
-        // każdej pozycji (poprawne też pod względem VAT przy mieszanych stawkach), a resztę
-        // zaokrąglenia dokłada ostatnia pozycja, żeby suma rabatów zgadzała się co do grosza.
+        // total_price_gross przy wyliczaniu dokumentu.
+        // Jak w HikaShopie: kupon obniża PRODUKTY, a wysyłkę tylko wtedy, gdy kupon ma ustawiony
+        // „Procent wysyłki” (classes/discount.php::afterShippingProcessing) — i dokładnie o tę część.
+        // Koszt płatności kupon nie obniża. Rozkład na całe zamówienie zaniżał wysyłkę i przesuwał
+        // VAT między stawkami (np. produkty 5%, wysyłka 23%).
         // sendInvoice() wykrywa pole 'discount' na pozycjach i sam ustawia show_discount/discount_kind.
         if (!empty($couponCode) && $couponValue > 0 && !empty($positions)) {
-            $grandTotal = array_sum(array_column($positions, 'total_price_gross'));
+            $shippingShare = 0.0;
 
-            if ($grandTotal > 0) {
-                // Kupon nie powinien przewyższać wartości zamówienia — zabezpieczenie przed
-                // rabatem większym niż pozycja (co znów dałoby ujemną wartość po odjęciu).
-                $couponToDistribute = min($couponValue, $grandTotal);
-                $remaining          = round($couponToDistribute, 2);
-                $lastIndex          = array_key_last($positions);
+            if ($shippingIndex !== null) {
+                // shortcut: HikaShop zaokrągla tę część osobno dla każdej wysyłki — przy kilku wysyłkach w jednym
+                // zamówieniu możliwy 1 gr przesunięcia między wysyłką a produktami (suma się zgadza); liczyć per wysyłka, gdyby to wyszło
+                $shippingGross = $positions[$shippingIndex]['total_price_gross'];
+                $shippingShare = min(round($this->getCouponShippingPercent($couponCode) * $shippingGross / 100, 2), $couponValue, $shippingGross);
+            }
 
-                foreach ($positions as $i => &$pos) {
-                    if ($i === $lastIndex) {
-                        $share = $remaining;
-                    } else {
-                        $share = round($couponToDistribute * ($pos['total_price_gross'] / $grandTotal), 2);
-                        $remaining -= $share;
-                    }
+            $productIndexes = $productCount > 0 ? range(0, $productCount - 1) : [];
 
-                    if ($share > 0) {
-                        $pos['discount'] = min($share, $pos['total_price_gross']);
-                    }
+            if (array_sum(array_map(fn ($i) => $positions[$i]['total_price_gross'], $productIndexes)) > 0) {
+                $this->spreadDiscount($positions, $productIndexes, $couponValue - $shippingShare);
+
+                if ($shippingShare > 0) {
+                    $this->spreadDiscount($positions, [$shippingIndex], $shippingShare);
                 }
-                unset($pos);
+            } else {
+                // Brak produktów o dodatniej wartości — rabat na wszystko, żeby suma się zgadzała
+                $this->spreadDiscount($positions, array_keys($positions), $couponValue);
             }
         }
 
         return $positions;
+    }
+
+    /**
+     * Rozkłada rabat (pole 'discount', kwotowo) na wskazane pozycje proporcjonalnie do ich wartości
+     * brutto; resztę zaokrąglenia dostaje ostatnia, żeby suma rabatów zgadzała się co do grosza.
+     * Rabat nie przekracza wartości pozycji (ujemna pozycja jest odrzucana przez kasy fiskalne).
+     *
+     * @param   array  $positions  Pozycje dokumentu (modyfikowane)
+     * @param   array  $indexes    Indeksy pozycji, na które idzie rabat
+     * @param   float  $amount     Kwota rabatu brutto
+     *
+     * @return  void
+     *
+     * @since   2.3.2
+     */
+    private function spreadDiscount(array &$positions, array $indexes, float $amount): void
+    {
+        $base = array_sum(array_map(fn ($i) => $positions[$i]['total_price_gross'], $indexes));
+
+        if ($base <= 0 || $amount <= 0) {
+            return;
+        }
+
+        $amount    = min(round($amount, 2), $base);
+        $remaining = $amount;
+        $last      = end($indexes);
+
+        foreach ($indexes as $i) {
+            $share      = $i === $last ? round($remaining, 2) : round($amount * $positions[$i]['total_price_gross'] / $base, 2);
+            $remaining -= $share;
+
+            if ($share > 0) {
+                $positions[$i]['discount'] = min($share, $positions[$i]['total_price_gross']);
+            }
+        }
+    }
+
+    /**
+     * „Procent wysyłki” kuponu HikaShopa (discount_shipping_percent) — jaka część kosztu wysyłki
+     * jest objęta kuponem. Kupon usunięty po zamówieniu albo błąd bazy → 0 (cały rabat na produkty).
+     *
+     * @param   string  $couponCode  Kod kuponu z zamówienia
+     *
+     * @return  float
+     *
+     * @since   2.3.2
+     */
+    private function getCouponShippingPercent(string $couponCode): float
+    {
+        try {
+            $db    = Factory::getContainer()->get('DatabaseDriver');
+            $query = $db->getQuery(true)
+                ->select($db->quoteName('discount_shipping_percent'))
+                ->from($db->quoteName('#__hikashop_discount'))
+                ->where($db->quoteName('discount_code') . ' = ' . $db->quote($couponCode))
+                ->where($db->quoteName('discount_type') . ' = ' . $db->quote('coupon'));
+            $db->setQuery($query);
+
+            return max(0.0, (float) $db->loadResult());
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
     }
 
     /**

@@ -315,6 +315,38 @@ t('A10', 'Kupon 10 zł przy dwóch stawkach VAT: rozkład na pozycje, bez ujemny
     check(str_contains((string) ($inv['raw']['description'] ?? ''), 'KUPON10'), 'brak kodu kuponu w uwagach');
 });
 
+/** Pozycja dokumentu po początku nazwy */
+function positionOf(array $inv, string $prefix): array
+{
+    return array_values(array_filter($inv['positions'], fn ($p) => str_starts_with($p['name'], $prefix)))[0] ?? [];
+}
+
+t('A10b', 'Kupon bez „Procentu wysyłki” (jak w HikaShopie): rabat tylko na produkty, wysyłka i koszt płatności bez rabatu', function () {
+    [$p, $s] = env();
+    order(['products' => [product('Sok', 2, 10.00, 0.05)], 'order_shipping_price' => 25.00, 'order_shipping_tax' => 4.67,
+        'order_payment_price' => 2.46, 'order_payment_tax' => 0.46,
+        'order_discount_code' => 'KUPON5', 'order_discount_price' => 1.05, 'order_full_price' => 47.41]);
+    fire($p);
+    $inv = invoices($s)[0];
+    check(abs(sumInv($inv) - 47.41) < 0.005, 'suma ' . money(sumInv($inv)) . ' ≠ 47,41');
+    check(!isset(positionOf($inv, 'Wysyłka')['discount']), 'rabat na wysyłce: ' . json_encode(positionOf($inv, 'Wysyłka')['discount'] ?? null));
+    check(!isset(positionOf($inv, 'Koszt płatności')['discount']), 'rabat na koszcie płatności');
+    check(abs((float) (positionOf($inv, 'Sok')['discount'] ?? 0) - 1.05) < 0.005, 'rabat na produkcie: ' . json_encode(positionOf($inv, 'Sok')['discount'] ?? null));
+});
+
+t('A10c', 'Kupon z „Procentem wysyłki” 50%: na wysyłkę dokładnie 50% jej ceny, reszta kuponu na produkty', function () {
+    [$p, $s] = env();
+    Factory::$db->pdo->exec('CREATE TABLE jos_hikashop_discount (discount_code TEXT, discount_type TEXT, discount_shipping_percent REAL)');
+    Factory::$db->pdo->exec("INSERT INTO jos_hikashop_discount VALUES ('POL50', 'coupon', 50)");
+    order(['products' => [product('Sok', 2, 10.00, 0.05)], 'order_shipping_price' => 25.00, 'order_shipping_tax' => 4.67,
+        'order_discount_code' => 'POL50', 'order_discount_price' => 14.60, 'order_full_price' => 31.40]);
+    fire($p);
+    $inv = invoices($s)[0];
+    check(abs(sumInv($inv) - 31.40) < 0.005, 'suma ' . money(sumInv($inv)) . ' ≠ 31,40');
+    check(abs((float) (positionOf($inv, 'Wysyłka')['discount'] ?? 0) - 12.50) < 0.005, 'rabat na wysyłce: ' . json_encode(positionOf($inv, 'Wysyłka')['discount'] ?? null));
+    check(abs((float) (positionOf($inv, 'Sok')['discount'] ?? 0) - 2.10) < 0.005, 'rabat na produkcie: ' . json_encode(positionOf($inv, 'Sok')['discount'] ?? null));
+});
+
 t('A11', 'Darmowa dostawa: brak pozycji wysyłki', function () {
     [$p, $s] = env();
     order(['shippings' => [(object) ['shipping_name' => 'Odbiór osobisty', 'shipping_price' => 0]]]);
