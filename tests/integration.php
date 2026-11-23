@@ -74,6 +74,7 @@ namespace {
     $pluginsProp->setValue(null, []);
 
     require dirname(__DIR__) . '/src/Extension/Fakturownia.php';
+    require dirname(__DIR__) . '/src/Field/InvoicerequestField.php';
 
     $db     = $container->get('DatabaseDriver');
     $prefix = $app->get('dbprefix');
@@ -453,6 +454,49 @@ namespace {
             check(str_contains($all, 'ZAKOŃCZONO'), 'brak wpisu o zakończeniu');
 
             return count($rows) . ' wpisów, poziomy: ' . implode(', ', array_unique(array_column($rows, 'log_level')));
+        });
+
+        t('H14', 'Przycisk „Utwórz pole w HikaShopie”: pole invoice_request przez class.field HikaShopa (wpis + kolumna adresu), status w ustawieniach, drugi raz bez duplikatu', function () {
+            global $db, $prefix;
+            $count = fn () => (int) $db->setQuery("SELECT COUNT(*) FROM {$prefix}hikashop_field WHERE field_namekey = 'invoice_request'")->loadResult();
+            check($count() === 0, 'pole invoice_request już jest w tej kopii sklepu — test by je skasował, przerywam');
+            $render = function () {
+                $f    = new \Pablop76\Plugin\Hikashop\Fakturownia\Field\InvoicerequestField();
+                $form = new \Joomla\CMS\Form\Form('fakturownia_test');
+                $form->load('<form><field name="extension_id" type="hidden"/></form>');
+                $form->bind(['extension_id' => 4242]);
+                $f->setForm($form);
+
+                return (new ReflectionMethod($f, 'getInput'))->invoke($f);
+            };
+            $p      = makePlugin();
+            $create = new ReflectionMethod($p, 'createInvoiceRequestField');
+            $before = $render();
+            check(str_contains($before, 'action=create_field') && str_contains($before, 'extension_id=4242'), 'brak przycisku: ' . $before);
+
+            try {
+                [$msg, $type] = $create->invoke($p);
+                check($type === 'message' && $count() === 1, "utworzenie: $type $msg, pól: " . $count());
+                $row = $db->setQuery("SELECT * FROM {$prefix}hikashop_field WHERE field_namekey = 'invoice_request'")->loadObject();
+                check($row->field_table === 'address' && $row->field_type === 'checkbox' && $row->field_address_type === 'billing'
+                    && (int) $row->field_published === 1 && (int) $row->field_frontcomp === 1 && $row->field_value === '1::Chcę otrzymać fakturę VAT::0',
+                    'pole: ' . json_encode($row, JSON_UNESCAPED_UNICODE));
+                check(isset($db->getTableColumns($prefix . 'hikashop_address')['invoice_request']), 'brak kolumny invoice_request w tabeli adresów');
+                $billing = hikashop_get('class.field')->getFields('frontcomp', $null, 'address');
+                check(isset($billing['invoice_request']), 'HikaShop nie widzi pola w formularzu adresu na stronie sklepu');
+                check(str_contains($render(), 'alert-success'), 'status po utworzeniu: ' . $render());
+                [$msg2, $type2] = $create->invoke($p);
+                check($count() === 1 && $type2 === 'message', "drugie kliknięcie: $type2 $msg2, pól: " . $count());
+
+                return "„{$msg}” | drugi raz: „{$msg2}”";
+            } finally {
+                $id = (int) $db->setQuery("SELECT field_id FROM {$prefix}hikashop_field WHERE field_namekey = 'invoice_request'")->loadResult();
+
+                if ($id) {
+                    $ids = [$id];
+                    hikashop_get('class.field')->delete($ids, false);  // false = usuń też kolumnę z tabeli adresów
+                }
+            }
         });
     } finally {
         // ======================= Sprzątanie: stan sprzed testu ===========================

@@ -50,7 +50,7 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
      - **Prowadzi wtyczka** (domyślnie): przed wystawieniem faktury wtyczka szuka produktu w katalogu po kodzie z HikaShopa, a gdy go nie znajdzie, po nazwie. Brakujący produkt dodaje, a znalezionemu uaktualnia kod, nazwę, cenę netto i stawkę VAT. Pozycja faktury dostaje odnośnik do produktu (`product_id`), więc Fakturownia nie tworzy drugiego wpisu. Każdy produkt to od 1 do 3 dodatkowych żądań w trakcie zapisu zamówienia, więc przy dużym koszyku klient dłużej czeka na potwierdzenie.
      - **Prowadzi Fakturownia**: wtyczka nie wysyła nic do katalogu. Fakturownia sama dopisuje do niego pozycje wystawionych faktur i rozpoznaje je po nazwie. Wpisy nie mają kodów z HikaShopa, a produkt po zmianie nazwy trafia do katalogu jako nowy.
      - W obu trybach wysyłkę i koszt płatności (np. „Wysyłka: InPost Paczkomaty 24/7”) dopisuje do katalogu sama Fakturownia.
-3. **(Opcjonalnie) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
+3. **(Tylko w trybie Auto) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. W ustawieniach wtyczki wystarczy kliknąć **„Utwórz pole w HikaShopie”**. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
 
    > **Uwaga:** Paragony wymagają modułu paragony.pl zainstalowanego w serwisie Fakturownia.pl.
 
@@ -58,7 +58,11 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 
 ## Pole „Chcę otrzymać fakturę VAT"
 
-Pole pozwala klientowi **bez NIP-u** poprosić o fakturę VAT. Bez niego faktura i tak wystawia się, gdy klient poda NIP. Tworzy się je **ręcznie** w HikaShop: **Wyświetlanie → Pola użytkownika → Utwórz**, i ustawia tak:
+Pole pozwala klientowi **bez NIP-u** poprosić o fakturę VAT. Bez niego faktura i tak wystawia się, gdy klient poda NIP. Ma znaczenie tylko w trybie **Auto** — w trybie **Faktura VAT** każde zamówienie i tak dostaje fakturę, więc pole tylko myliłoby klientów.
+
+**Od wersji 2.3.3 pole tworzy wtyczka.** W ustawieniach wtyczki, po wybraniu trybu **Auto** i zapisaniu ustawień, pod typem dokumentu widać stan pola. Jeśli pola nie ma, przycisk **„Utwórz pole w HikaShopie”** zakłada je funkcją HikaShopa (tą samą, której używa jego panel): w adresie płatności, jako pole do zaznaczenia, opublikowane i widoczne w sklepie. Istniejącego pola wtyczka nie zmienia. Wygląd i treść zmienisz później w HikaShop → Wyświetlanie → Pola użytkownika.
+
+Gdyby przycisk zgłosił błąd, pole można utworzyć **ręcznie** w HikaShop: **Wyświetlanie → Pola użytkownika → Utwórz**, i ustawić tak:
 
 | Pole w formularzu HikaShop | Wartość |
 |---|---|

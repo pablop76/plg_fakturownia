@@ -286,6 +286,11 @@ namespace {
                 {
                     return (int) ($this->in[$key] ?? $default);
                 }
+
+                public function getCmd($key, $default = '')
+                {
+                    return (string) preg_replace('/[^A-Z0-9_\.-]/i', '', (string) ($this->in[$key] ?? $default));
+                }
             };
         }
 

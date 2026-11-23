@@ -2,7 +2,7 @@
 <extension type="plugin" version="5.0" method="upgrade" group="hikashop">
     <name>PLG_HIKASHOP_FAKTUROWNIA</name>
     <creationDate>2026-11-23</creationDate>
-    <version>2.3.2</version>
+    <version>2.3.3</version>
     <author>Paweł Półtoraczyk</author>
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
@@ -81,6 +81,14 @@
                     <option value="vat">PLG_HIKASHOP_FAKTUROWNIA_OPTION_VAT</option>
                     <option value="auto">PLG_HIKASHOP_FAKTUROWNIA_OPTION_AUTO</option>
                 </field>
+                <field
+                    name="invoice_request_field"
+                    type="invoicerequest"
+                    addfieldprefix="Pablop76\Plugin\Hikashop\Fakturownia\Field"
+                    showon="invoice_mode:auto"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_FIELD_STATUS_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_FIELD_STATUS_DESC"
+                />
                 <field
                     name="auto_send_email"
                     type="radio"

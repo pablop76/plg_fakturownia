@@ -2153,8 +2153,11 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        $createField = $app->getInput()->getCmd('action') === 'create_field';
         $orderId     = $app->getInput()->getInt('order_id', 0);
-        $redirectUrl = 'index.php?option=com_hikashop&ctrl=order&task=edit&cid[]=' . $orderId;
+        $redirectUrl = $createField
+            ? 'index.php?option=com_plugins&task=plugin.edit&extension_id=' . $app->getInput()->getInt('extension_id', 0)
+            : 'index.php?option=com_hikashop&ctrl=order&task=edit&cid[]=' . $orderId;
 
         // CSRF — token sesji w URL przycisku
         if (!Session::checkToken('get')) {
@@ -2169,6 +2172,15 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
 
         if (!$user || $user->guest || !$user->authorise('core.manage', 'com_hikashop')) {
             $app->enqueueMessage(Text::_('JERROR_ALERTNOAUTHOR'), 'error');
+            $app->redirect($redirectUrl);
+
+            return;
+        }
+
+        if ($createField) {
+            [$message, $type] = $this->createInvoiceRequestField();
+            $this->log("Pole invoice_request: admin '{$user->username}' — {$message}");
+            $app->enqueueMessage($message, $type);
             $app->redirect($redirectUrl);
 
             return;
@@ -2198,6 +2210,74 @@ final class Fakturownia extends CMSPlugin implements SubscriberInterface
         }
 
         $app->redirect($redirectUrl);
+    }
+
+    /**
+     * Tworzy pole HikaShopa „Chcę otrzymać fakturę VAT” (adres płatności, checkbox, kolumna
+     * invoice_request) funkcją HikaShopa class.field->save() — tą samą, której używa jego panel,
+     * łącznie z dodaniem kolumny do tabeli adresów. Istniejącego pola nie zmienia.
+     *
+     * @return  array{0: string, 1: string}  Komunikat i jego typ (message/warning/error)
+     *
+     * @since   2.3.3
+     */
+    private function createInvoiceRequestField(): array
+    {
+        try {
+            if (!$this->loadHikashop()) {
+                return [Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_NO_HIKASHOP'), 'error'];
+            }
+
+            $db    = Factory::getContainer()->get('DatabaseDriver');
+            $query = $db->getQuery(true)
+                ->select($db->quoteName('field_id'))
+                ->from($db->quoteName('#__hikashop_field'))
+                ->where($db->quoteName('field_namekey') . ' = ' . $db->quote('invoice_request'))
+                ->where($db->quoteName('field_table') . ' = ' . $db->quote('address'));
+
+            if ($db->setQuery($query)->loadResult()) {
+                return [Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_EXISTS'), 'message'];
+            }
+
+            $label = Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_VALUE');
+            $field = (object) [
+                'field_table'        => 'address',
+                'field_realname'     => $label,
+                'field_namekey'      => 'invoice_request',
+                'field_type'         => 'checkbox',
+                'field_value'        => '1::' . $label . '::0',
+                'field_published'    => 1,
+                'field_ordering'     => 999,
+                'field_options'      => serialize([]),
+                'field_core'         => 0,
+                'field_required'     => 0,
+                'field_access'       => 'all',
+                'field_categories'   => 'all',
+                'field_products'     => '',
+                'field_shipping_id'  => '',
+                'field_payment_id'   => '',
+                'field_address_type' => 'billing',
+                'field_frontcomp'    => 1,
+                'field_backend'      => 1,
+            ];
+
+            if (!hikashop_get('class.field')->save($field)) {
+                return [Text::sprintf('PLG_HIKASHOP_FAKTUROWNIA_FIELD_ERROR', 'HikaShop'), 'error'];
+            }
+
+            // Kolejność jak po zapisie z panelu HikaShopa (classes/field.php saveForm)
+            $orderHelper              = hikashop_get('helper.order');
+            $orderHelper->pkey        = 'field_id';
+            $orderHelper->table       = 'field';
+            $orderHelper->groupMap    = 'field_table';
+            $orderHelper->groupVal    = 'address';
+            $orderHelper->orderingMap = 'field_ordering';
+            $orderHelper->reOrder();
+
+            return [Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_CREATED_OK'), 'message'];
+        } catch (\Throwable $e) {
+            return [Text::sprintf('PLG_HIKASHOP_FAKTUROWNIA_FIELD_ERROR', $e->getMessage()), 'error'];
+        }
     }
 
     /**

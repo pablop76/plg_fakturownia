@@ -194,14 +194,10 @@ return new class () implements InstallerScriptInterface {
     }
 
     /**
-     * Sprząta nieudaną próbę pola zamówienia i informuje administratora, jak utworzyć
-     * pole „Chcę otrzymać fakturę VAT".
-     *
-     * Pole tworzy się RĘCZNIE w panelu HikaShop (Display → Custom fields). Programowe
-     * tworzenie definicji pola zależy od wewnętrznej struktury tabel HikaShopa (różni się
-     * między wersjami — np. brak kolumny field_name) i okazało się zawodne. HikaShop
-     * tworzy wtedy poprawne, edytowalne pole, a wtyczka odczytuje je automatycznie. Pola
-     * ADRESU celowo nie ruszamy, aby aktualizacja nie skasowała pola utworzonego przez admina.
+     * Sprząta nieudaną próbę pola zamówienia z dawnych wersji. Pole „Chcę otrzymać fakturę
+     * VAT" (adres) tworzy od 2.3.3 przycisk w ustawieniach wtyczki (tryb „Auto") funkcją
+     * HikaShopa — dlatego instalator nie pokazuje już instrukcji ręcznego zakładania pola.
+     * Pola ADRESU celowo nie ruszamy, aby aktualizacja nie skasowała pola utworzonego przez admina.
      *
      * @return  void
      */
@@ -219,14 +215,8 @@ return new class () implements InstallerScriptInterface {
             $db->setQuery($query);
             $db->execute();
         } catch (\Throwable $e) {
-            // Niekrytyczne — pole i tak tworzy się ręcznie w panelu
+            // Niekrytyczne — to tylko sprzątanie
         }
-
-        // Instrukcja dla administratora: jak utworzyć pole i skonfigurować checkout.
-        Factory::getApplication()->enqueueMessage(
-            Text::_('PLG_HIKASHOP_FAKTUROWNIA_FIELD_CREATED'),
-            'notice'
-        );
     }
 
     /**
