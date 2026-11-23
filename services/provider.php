@@ -31,10 +31,13 @@ return new class () implements ServiceProviderInterface {
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new Fakturownia(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('hikashop', 'fakturownia')
-                );
+                $config = (array) PluginHelper::getPlugin('hikashop', 'fakturownia');
+
+                // Od Joomli 5.3 konstruktor przyjmuje samą konfigurację (dyspozytor jako
+                // 1. argument zniknie w 7.0); 5.0–5.2 wymagają dyspozytora.
+                $plugin = version_compare(JVERSION, '5.3', '>=')
+                    ? new Fakturownia($config)
+                    : new Fakturownia($container->get(DispatcherInterface::class), $config);
                 $plugin->setApplication(Factory::getApplication());
 
                 return $plugin;

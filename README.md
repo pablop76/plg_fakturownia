@@ -9,12 +9,13 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 
 ## Funkcje
 - Automatyczne wystawianie faktur VAT lub paragonów w Fakturowni przy zamówieniach z HikaShop.
-- Przekazywanie danych klienta (imię, nazwisko, telefon, nazwa firmy, NIP, adres, e-mail).
+- Przekazywanie danych nabywcy wprost na dokument (firma lub osoba prywatna, imię, nazwisko, NIP, adres, kod kraju, e-mail) — kartę klienta Fakturownia dopasowuje lub zakłada sama.
 - Przekazywanie pozycji zamówienia (produkt, ilość, cena, VAT, rabaty, koszty wysyłki, kupony).
 - **Pole „Chcę otrzymać fakturę VAT"** (pole adresu rozliczeniowego) — klient sam decyduje o fakturze, nawet bez NIP.
-- **Walidacja NIP nabywcy** — czyści formatowanie i sprawdza sumę kontrolną; błędny NIP nie blokuje wystawienia (faktura idzie bez NIP).
+- **Walidacja NIP nabywcy** — czyści formatowanie i sprawdza sumę kontrolną polskiego NIP; błędny NIP nie blokuje wystawienia (faktura idzie bez NIP). Numery VAT nabywców spoza Polski (np. `DE123456789`) przechodzą bez zmian.
 - **Konfigurowalny status zamówienia** wyzwalający wystawienie (domyślnie „confirmed").
-- **Ochrona przed duplikatami** — to samo zamówienie nie wystawi dwóch faktur.
+- **Ochrona przed duplikatami** — w sklepie (blokada zamówienia) i po stronie Fakturowni: dokument dostaje numer zamówienia (`oid`) z wymogiem unikalności, więc Fakturownia sama odrzuci drugi dokument dla tego samego zamówienia, nawet po zerwanym połączeniu.
+- **Zgodność z KSeF** — rodzaj nabywcy (firma / osoba prywatna), kod kraju, limity długości pól, powiązanie korekty z fakturą; status KSeF dokumentu widoczny w panelu zamówienia.
 - Opcjonalne automatyczne wysyłanie faktury e-mailem do klienta.
 - **Powiadomienie o konieczności korekty** przy anulowaniu/zwrocie zamówienia po wystawieniu dokumentu, z opcją automatycznego wystawienia korekty do zera.
 - **Przycisk „Wystaw ponownie"** w widoku zamówienia w panelu — wymusza ponowne wystawienie dokumentu (np. po poprawieniu danych i usunięciu błędnego dokumentu w Fakturowni).
@@ -37,15 +38,15 @@ Wtyczka umożliwia **automatyczne wystawianie faktur** w systemie [Fakturownia.p
 2. Wejdź w ustawienia wtyczki i uzupełnij:
    - **API Token** z konta Fakturownia (Ustawienia → Ustawienia konta → Integracja)
    - **Subdomena konta** (np. `mojafirma` — bez `.fakturownia.pl`)
-   - **Nazwa firmy sprzedawcy** (zgodna z wpisem w Fakturowni)
-   - **NIP sprzedawcy**
+   - Danych sprzedawcy **nie wpisuje się** — Fakturownia bierze je z **Ustawienia → Dane firmy** (od wersji 2.3.0; przy KSeF wymagany jest tam pełny adres firmy).
    - **Status wyzwalający** — przy jakim statusie zamówienia wystawić dokument (domyślnie `confirmed`; można podać kilka po przecinku, np. `confirmed,shipped`)
    - **Termin płatności (dni)** — data „Termin płatności" na dokumencie, liczona od wystawienia (domyślnie `0`, bo zamówienie przy statusie `confirmed` jest już opłacone)
    - **Statusy opłacone** — które statusy oznaczają opłacone zamówienie (domyślnie `auto` — status z kolumny „confirmed" w HikaShop). Dokument wystawiony przy statusie opłaconym od razu ma płatność; wystawiony przy nieopłaconym pozostaje nieopłacony, a płatność dorejestruje się automatycznie po przejściu zamówienia na status opłacony
    - **Typ dokumentu:**
      - **Faktura VAT** — każde zamówienie dostaje fakturę,
      - **Auto** — paragon domyślnie, a faktura gdy klient poda NIP lub zaznaczy „Chcę fakturę VAT" (wymaga modułu paragony.pl).
-   - **Automatycznie wysyłaj fakturę e-mailem** — po wystawieniu faktura zostanie wysłana na adres e-mail klienta z poziomu Fakturowni.
+   - **Automatycznie wysyłaj fakturę e-mailem** — po wystawieniu faktura zostanie wysłana na adres e-mail klienta z poziomu Fakturowni. Przy aktywnym KSeF fakturę dla firmy Fakturownia wyśle dopiero po nadaniu numeru KSeF — gdy odmówi, w historii zamówienia pojawi się informacja, żeby wysłać ją z Fakturowni.
+   - **Synchronizuj katalog produktów** (domyślnie włączone) — produkty z zamówienia trafiają do katalogu produktów Fakturowni. Faktura tego nie wymaga, a każdy produkt to dodatkowe żądanie w trakcie zapisu zamówienia — wyłącz, jeśli nie korzystasz z katalogu.
 3. **(Opcjonalnie) Utwórz pole „Chcę otrzymać fakturę VAT"** — pozwala klientowi bez NIP-u poprosić o fakturę. Zobacz sekcję *„Pole »Chcę otrzymać fakturę VAT«"* poniżej.
 
    > **Uwaga:** Paragony wymagają modułu paragony.pl zainstalowanego w serwisie Fakturownia.pl.
@@ -93,11 +94,12 @@ W trybie **Faktura VAT** każde zamówienie otrzymuje fakturę, niezależnie od 
 ## Działanie
 1. Klient składa zamówienie w sklepie (opcjonalnie zaznacza „Chcę otrzymać fakturę VAT").
 2. Po zmianie statusu zamówienia na wyzwalający (domyślnie **confirmed**) wtyczka automatycznie:
-   - tworzy lub aktualizuje klienta w Fakturowni,
-   - wystawia fakturę VAT lub paragon,
+   - wystawia fakturę VAT lub paragon z danymi nabywcy (kartę klienta Fakturownia dopasowuje lub zakłada sama),
    - rejestruje płatność (gdy status zamówienia jest na liście „Statusów opłaconych"; inaczej dokument czeka nieopłacony i płatność dorejestruje się przy przejściu na status opłacony),
    - opcjonalnie wysyła fakturę e-mailem,
-   - dodaje produkty do katalogu Fakturowni.
+   - opcjonalnie dodaje produkty do katalogu Fakturowni.
+
+Każde żądanie do API ma limit czasu (20 s), a token API jest przekazywany w nagłówku `Authorization` (zalecenie Fakturowni od listopada 2026). Kwoty pozycji pochodzą wprost z zamówienia HikaShop (cena i podatek jednostkowy policzone przez HikaShop), więc suma dokumentu zgadza się z kwotą zapłaconą przez klienta także przy włączonej w HikaShopie opcji zaokrąglania obliczeń.
 
 ---
 
@@ -118,7 +120,9 @@ Gdy zamówienie, które **ma już wystawiony dokument** w Fakturowni, zmieni sta
 - **Status(y) anulowania/zwrotu** — domyślnie `auto`: wtyczka sama pobiera listę z HikaShop (**System → Statusy zamówień** — wszystkie statusy z zaznaczoną kolumną **„cancelled"**; standardowo `cancelled` i `refunded`, ale obejmuje też Twoje własne statusy z tą flagą, np. `zwrot`). Możesz też wpisać ręcznie klucze statusów (namekey) po przecinku — to nadpisuje tryb auto. Wyczyszczenie pola wyłącza całą funkcję.
 
   **Po co tryb `auto`?** HikaShop już wie, które statusy oznaczają anulowanie — właśnie po to jest kolumna „cancelled" w Statusach zamówień (używa jej m.in. do zwalniania stanu magazynowego). Bez trybu auto wtyczka trzymałaby **drugą, własną kopię** tej samej listy: tworzysz nowy status zwrotu, zaznaczasz mu ptaszek w HikaShop i… musisz pamiętać, żeby dopisać go też w ustawieniach wtyczki — inaczej korekta cicho nie powstanie. Dwie kopie tej samej informacji zawsze w końcu się rozjadą. `auto` = jedna lista, zarządzana w jednym, natywnym miejscu HikaShop. Ręczną listę wpisuj tylko wtedy, gdy celowo chcesz, żeby wtyczka reagowała na inne statusy niż flagi HikaShop (np. status ma ptaszek „cancelled" dla magazynu, ale nie chcesz dla niego korekt).
-- **Automatyczna korekta** (domyślnie **wyłączona**) — gdy włączona, wtyczka sama wystawi w Fakturowni fakturę korygującą **do zera** (pełny zwrot/anulowanie całości — bez obsługi zwrotów częściowych). Bez tego ustawienia korektę trzeba wystawić ręcznie w Fakturowni po otrzymaniu powiadomienia.
+- **Automatyczna korekta** (domyślnie **wyłączona**) — gdy włączona, wtyczka sama wystawi w Fakturowni fakturę korygującą **do zera**. Pozycje i dane nabywcy korekta bierze z **dokumentu pobranego z Fakturowni**, a nie z bieżącego zamówienia — dzięki temu zgadza się z fakturą, nawet jeśli zamówienie zmieniono po jej wystawieniu, a KSeF dostaje niezmienione dane nabywcy i powiązanie z korygowaną fakturą. Bez tego ustawienia korektę trzeba wystawić ręcznie w Fakturowni po otrzymaniu powiadomienia.
+
+> **Zwroty częściowe nie są obsługiwane.** Każdy status z listy anulowania/zwrotu oznacza dla wtyczki zwrot **całości** — przy włączonej automatycznej korekcie powstanie korekta do zera. Jeśli zwracasz klientowi tylko część zamówienia, nie ustawiaj takiego statusu (albo wyłącz automatyczną korektę) i wystaw korektę częściową ręcznie w Fakturowni.
 
 > To tworzy prawdziwy dokument księgowy — zanim włączysz automatyczną korektę, przetestuj pełny cykl (zamówienie → faktura → anulowanie → korekta) na koncie testowym Fakturowni.
 >
@@ -156,7 +160,7 @@ Przykłady z własnymi statusami:
 
 ## Przycisk „Wystaw ponownie"
 
-W widoku zamówienia w panelu HikaShop (pod listą produktów) wtyczka pokazuje sekcję **Fakturownia**: aktualny stan (ID wystawionego dokumentu / błąd / brak dokumentu) oraz przycisk **„Wystaw ponownie w Fakturowni"**. Przycisk czyści znaczniki wystawienia dla tego zamówienia i od razu przepuszcza je przez normalną ścieżkę wystawiania (wszystkie walidacje i ochrona przed duplikatami działają jak zwykle).
+W widoku zamówienia w panelu HikaShop (pod listą produktów) wtyczka pokazuje sekcję **Fakturownia**: aktualny stan (ID wystawionego dokumentu i jego status w KSeF / duplikat / błąd / brak dokumentu) oraz przycisk **„Wystaw ponownie w Fakturowni"**. Przycisk czyści znaczniki wystawienia dla tego zamówienia i od razu przepuszcza je przez normalną ścieżkę wystawiania (wszystkie walidacje i ochrona przed duplikatami działają jak zwykle).
 
 Kiedy się przydaje:
 
@@ -164,7 +168,7 @@ Kiedy się przydaje:
 - ktoś omyłkowo usunął dokument w Fakturowni, a sklep uważa, że faktura już jest;
 - próba wystawienia utknęła (np. chwilowa awaria API).
 
-> **Uwaga:** wtyczka niczego nie usuwa w Fakturowni. Jeśli poprzedni dokument nadal tam istnieje, powstanie **duplikat** — dlatego przed ponownym wystawieniem usuń go w Fakturowni (przycisk pokazuje to ostrzeżenie przed potwierdzeniem). Zamówienie musi też mieć status wyzwalający (domyślnie `confirmed`), inaczej wystawienie zostanie pominięte.
+> **Uwaga:** wtyczka niczego nie usuwa w Fakturowni. Jeśli poprzedni dokument dla tego zamówienia nadal tam istnieje, Fakturownia **odrzuci** drugi (numer zamówienia musi być unikalny), a sekcja pokaże stan „duplikat” — żeby wystawić nowy, najpierw usuń poprzedni w Fakturowni. Zamówienie musi też mieć status wyzwalający (domyślnie `confirmed`), inaczej wystawienie zostanie pominięte.
 
 ---
 
@@ -172,7 +176,15 @@ Kiedy się przydaje:
 
 Wtyczka nie wymaga żadnej konfiguracji pod KSeF — wysyłkę e-faktur włącza się **po stronie Fakturowni**: **Ustawienia → Ustawienia konta → KSeF** (tryb automatycznej wysyłki: wyłączona / tylko polskie firmy / wszystkie firmy / wszystkie dokumenty). Przy włączonym trybie automatycznym każda faktura utworzona przez wtyczkę trafia do KSeF tak samo, jak wystawiona ręcznie w panelu. Instrukcja połączenia konta: [Jak połączyć Fakturownię z KSeF (DEMO)](https://pomoc.fakturownia.pl/197913379-Jak-polaczyc-Fakturownie-z-KSeF-DEMO-autoryzacja-integracji-krok-po-kroku).
 
-> Status wysyłki do KSeF (numer KSeF, ewentualne błędy walidacji) sprawdzisz w panelu Fakturowni przy dokumencie — wtyczka nie raportuje go w sklepie.
+Co wtyczka robi pod KSeF (od wersji 2.3.0):
+
+- wysyła rodzaj nabywcy (`buyer_company`) — od niego Fakturownia zależy, czy faktura trafi do KSeF automatycznie; osoba prywatna ma imię i nazwisko, firma bez NIP — oznaczenie „brak identyfikatora”;
+- wysyła kod kraju nabywcy (np. `PL`) — tryb „Tylko polskie firmy” wysyła faktury z krajem `PL`;
+- nie wysyła danych sprzedawcy — Fakturownia bierze je z **Ustawienia → Dane firmy** (KSeF wymaga tam pełnego adresu);
+- przycina nazwy pozycji do 256 znaków, a adres nabywcy do 255 (dłuższe kończyły się odrzuceniem dokumentu);
+- korektę wiąże z korygowaną fakturą i nie zmienia w niej danych nabywcy (wymóg KSeF).
+
+Status KSeF dokumentu (np. `processing`, `ok`, numer KSeF, błędy walidacji) wtyczka pokazuje w sekcji **Fakturownia** w widoku zamówienia — odczytuje go z Fakturowni przy otwarciu zamówienia.
 
 ---
 
@@ -181,8 +193,10 @@ W ustawieniach wtyczki można włączyć:
 - **Logowanie zamówień** — zapisuje pełne dane zamówienia do logu,
 - **Logowanie API** — zapisuje komunikację z Fakturownią.
 
-Logi znajdują się w: `administrator/logs/hikashop_fakturownia.log.php` — otwórz przez FTP/menedżer plików. Plik ma rozszerzenie `.php` i nagłówek blokujący **celowo**: katalog logów Joomli nie jest chroniony przed pobraniem z przeglądarki, a log zawiera dane osobowe klientów (tak samo zabezpiecza swoje logi rdzeń Joomli).
-Kluczowe zdarzenia cyklu życia (start, wybór typu dokumentu, wynik) zapisywane są zawsze — niezależnie od trybu debug.
+Od wersji 2.3.0 wtyczka pisze do **dziennika HikaShopa**: **HikaShop → System → Logi**, źródło `fakturownia` — wpisy można filtrować po zamówieniu, a HikaShop sam maskuje wrażliwe dane i usuwa stare wpisy. W HikaShopie starszym niż 6.8.1 te same wpisy trafiają do pliku logu HikaShopa.
+Kluczowe zdarzenia cyklu życia (start, wybór typu dokumentu, wynik) zapisywane są zawsze — niezależnie od trybu debug. Błędy, które wymagają reakcji, trafiają też do historii zamówienia.
+
+> Dawny plik `administrator/logs/hikashop_fakturownia.log.php` nie jest już uzupełniany — możesz go usunąć, gdy nie będzie potrzebny. Niechroniony plik z wersji sprzed 2.1.0 (`hikashop_fakturownia.log`) aktualizacja przenosi do chronionego i usuwa.
 
 ---
 
@@ -209,6 +223,15 @@ Gałąź **`release`** jest oddzielona od `main` — `main` to bieżąca praca/r
 7. W Joomla: Extensions → Manage → Update → „Znajdź aktualizacje” wykryje nową wersję (może być potrzebna chwila na propagację cache CDN GitHuba, zwykle do kilku minut).
 
 > Joomla pokazuje aktualizację tylko wtedy, gdy wersja w `updates.xml` jest **wyższa** niż aktualnie zainstalowana — samo dodanie mechanizmu (bez podbicia wersji) niczego nie pokaże.
+
+---
+
+## Testy
+
+Katalog `tests/` (nie trafia do paczki instalacyjnej):
+
+- `php tests/run.php` — testy bez Joomli i bez sieci: atrapy klas rdzenia, SQLite w pamięci, udawane API Fakturowni odwzorowujące dokumentację (w tym walidację KSeF);
+- `php tests/integration.php <katalog lokalnej kopii Joomli>` — test na prawdziwej Joomli, HikaShopie i bazie **lokalnej** kopii sklepu, z udawanym API Fakturowni. Skrypt odmawia pracy, gdy baza nie jest na localhost, odcina inne wtyczki HikaShopa, wyłącza pocztę w pamięci i po przebiegu usuwa wszystkie swoje rekordy.
 
 ---
 

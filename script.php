@@ -140,7 +140,45 @@ return new class () implements InstallerScriptInterface {
      */
     public function postflight(string $type, InstallerAdapter $adapter): bool
     {
+        if ($type === 'update') {
+            $this->protectLegacyLog();
+        }
+
         return true;
+    }
+
+    /**
+     * Od 2.3.0 wtyczka pisze do dziennika HikaShopa, a nie do własnego pliku. Wersje
+     * sprzed 2.1.0 pisały do niechronionego administrator/logs/hikashop_fakturownia.log
+     * (dane osobowe pod publicznym adresem). Wcześniej przenosiła go sama wtyczka przy
+     * każdym zapisie logu — teraz robi to aktualizacja: zawartość trafia do chronionego
+     * pliku .log.php (nagłówek die()), a stary plik jest usuwany.
+     *
+     * @return  void
+     */
+    private function protectLegacyLog(): void
+    {
+        $legacy    = JPATH_ADMINISTRATOR . '/logs/hikashop_fakturownia.log';
+        $protected = $legacy . '.php';
+
+        if (!is_file($legacy)) {
+            return;
+        }
+
+        if (!is_file($protected)) {
+            @file_put_contents($protected, "#<?php die('Forbidden.'); ?>\n");
+        }
+
+        $content = @file_get_contents($legacy);
+
+        if (is_string($content) && $content !== '') {
+            @file_put_contents($protected, $content, FILE_APPEND);
+        }
+
+        if (!@unlink($legacy)) {
+            // Nie dało się usunąć — przynajmniej opróżnij, żeby dane nie były publiczne
+            @file_put_contents($legacy, '');
+        }
     }
 
     /**

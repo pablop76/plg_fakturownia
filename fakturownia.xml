@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <extension type="plugin" version="5.0" method="upgrade" group="hikashop">
     <name>PLG_HIKASHOP_FAKTUROWNIA</name>
-    <creationDate>2026-07-04</creationDate>
-    <version>2.2.4</version>
+    <creationDate>2026-11-23</creationDate>
+    <version>2.3.0</version>
     <author>Paweł Półtoraczyk</author>
     <authorEmail>kontakt@web-service.com.pl</authorEmail>
     <authorUrl>https://web-service.com.pl</authorUrl>
@@ -35,7 +35,7 @@
                 <field
                     id="api_token"
                     name="api_token"
-                    type="text"
+                    type="password"
                     label="PLG_HIKASHOP_FAKTUROWNIA_API_TOKEN_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_API_TOKEN_DESC"
                     size="40"
@@ -47,21 +47,6 @@
                     label="PLG_HIKASHOP_FAKTUROWNIA_SUBDOMAIN_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_SUBDOMAIN_DESC"
                     size="40"
-                />
-                <field
-                    name="seller_name"
-                    type="text"
-                    default=""
-                    label="PLG_HIKASHOP_FAKTUROWNIA_SELLER_NAME_LABEL"
-                    description="PLG_HIKASHOP_FAKTUROWNIA_SELLER_NAME_DESC"
-                    filter="raw"
-                />
-                <field
-                    name="seller_tax_no"
-                    type="text"
-                    default=""
-                    label="PLG_HIKASHOP_FAKTUROWNIA_SELLER_TAX_NO_LABEL"
-                    description="PLG_HIKASHOP_FAKTUROWNIA_SELLER_TAX_NO_DESC"
                 />
                 <field
                     name="trigger_status"
@@ -111,6 +96,15 @@
                     default="1"
                     label="PLG_HIKASHOP_FAKTUROWNIA_COUPON_NOTE_LABEL"
                     description="PLG_HIKASHOP_FAKTUROWNIA_COUPON_NOTE_DESC">
+                    <option value="1">Tak</option>
+                    <option value="0">Nie</option>
+                </field>
+                <field
+                    name="sync_products"
+                    type="radio"
+                    default="1"
+                    label="PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_LABEL"
+                    description="PLG_HIKASHOP_FAKTUROWNIA_SYNC_PRODUCTS_DESC">
                     <option value="1">Tak</option>
                     <option value="0">Nie</option>
                 </field>
